@@ -9,12 +9,14 @@ window.ZIGZAG_SONGS = {
   files: [
     "1-Demo Pulse.mp3",
     "2-Neon Rush - Remix.mp3",
-    "3-Slow Drift.mp3"
+    "3-Slow Drift.mp3",
+    "4-Skillet - Monster.mp3",
   ],
   bpm: `
 # id=bpm   (optional: id=bpm,firstBeatSeconds)
 1=120
 2=172
 3=90
+4=135
 `
 };
