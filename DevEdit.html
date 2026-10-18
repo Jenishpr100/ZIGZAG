@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ZIGZAG Level Editor (DevEdit)</title>
+<title>MuZiC "Switch" Editor (DevEdit)</title>
 <style>
   :root { --bg:#0d0d12; --panel:#15151c; --line:#2a2a36; --text:#e8e8f0; --dim:#8a8a99; --accent:#7c5cff; }
   * { box-sizing:border-box; }
@@ -28,6 +28,37 @@
   #help kbd { background:#22222e; border:1px solid var(--line); border-radius:4px; padding:0 5px; }
   #hold-banner { position:absolute; top:16px; left:50%; transform:translateX(-50%); background:#c0392b; color:#fff; padding:4px 14px; border-radius:6px; font-weight:700; display:none; }
   #toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#15151c; color:#fff; border:1px solid #444; border-radius:8px; padding:10px 20px; box-shadow:0 4px 18px rgba(0,0,0,.5); opacity:0; transition:opacity .4s; pointer-events:none; z-index:99; }
+
+  /* ---- tabs (BEATMAP | WORLD) ---- */
+  #tabbar { display:flex; gap:2px; padding:8px 14px 0; background:var(--panel); border-bottom:1px solid var(--line); }
+  .tabbtn { background:#0a0a10; color:var(--dim); border:1px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0; padding:7px 20px; font-weight:700; letter-spacing:1px; }
+  .tabbtn:hover { color:var(--text); }
+  .tabbtn.active { background:var(--bg); color:var(--accent); border-color:var(--accent); }
+
+  /* ---- WORLD tab ---- */
+  #w-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); }
+  #w-main { display:flex; gap:14px; padding:12px 14px; align-items:flex-start; }
+  #w-rooms { flex:0 0 240px; max-width:240px; }
+  #w-dialogs { flex:0 0 300px; max-width:300px; }
+  #w-canvaswrap { flex:1 1 auto; min-width:300px; }
+  #w-grid { display:block; width:100%; height:560px; background:#0a0a10; border:1px solid var(--line); border-radius:8px; cursor:crosshair; image-rendering:pixelated; }
+  .w-lbl { color:var(--dim); font-size:12px; }
+  .w-sec { color:var(--dim); font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin:10px 0 4px; }
+  .w-btns { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+  .w-props label { display:flex; gap:5px; align-items:center; margin:4px 0; color:var(--dim); font-size:12px; }
+  .w-props input[type=text] { width:150px; }
+  .w-props input[type=number] { width:56px; }
+  .w-props select { max-width:170px; }
+  .w-page { display:flex; gap:5px; align-items:center; margin:4px 0; }
+  .w-page textarea { flex:1; background:#0a0a10; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; resize:vertical; min-height:34px; }
+  #w-roomlist, #w-dialoglist { display:flex; flex-direction:column; gap:4px; max-height:230px; overflow:auto; }
+  .w-item { text-align:left; background:#0a0a10; border:1px solid var(--line); border-radius:6px; padding:6px 8px; color:var(--text); cursor:pointer; font:inherit; font-size:13px; }
+  .w-item:hover { border-color:var(--accent); }
+  .w-item.sel { border-color:var(--accent); color:var(--accent); }
+  .w-item small { color:var(--dim); }
+  .w-danger { background:#3a1812; border-color:#c0392b; }
+  button.mini { padding:3px 8px; font-size:12px; }
+  #w-status { margin-top:6px; min-height:16px; }
 </style>
 </head>
 <body>
@@ -40,6 +71,12 @@
   <button id="btn-start" class="primary">Start Mapping</button>
 </header>
 
+<div id="tabbar" role="tablist">
+  <button class="tabbtn active" data-tab="beatmap" role="tab" aria-selected="true">BEATMAP</button>
+  <button class="tabbtn" data-tab="world" role="tab" aria-selected="false">WORLD</button>
+</div>
+
+<div id="page-beatmap">
 <div id="meta">
   <label>Title <input id="m-title" type="text"></label>
   <label>Artist <input id="m-artist" type="text"></label>
@@ -84,6 +121,88 @@
   <kbd>+</kbd>/<kbd>−</kbd> or mouse wheel = zoom · Shift+wheel or drag background = pan · drag a note to retime · drag a hold's end to resize.
 </div>
 
+</div><!-- /#page-beatmap -->
+
+<div id="page-world" hidden>
+  <div id="w-toolbar">
+    <span class="w-lbl">Tools</span>
+    <button class="wtool primary" data-tool="wall" title="Paint walls"># Wall</button>
+    <button class="wtool" data-tool="floor" title="Paint floor">. Floor</button>
+    <button class="wtool" data-tool="path" title="Paint walkable path">- Path</button>
+    <button class="wtool" data-tool="select" title="Click an entity to edit or delete it">Select</button>
+    <button class="wtool" data-tool="door" title="Click a tile to place a door">Door</button>
+    <button class="wtool" data-tool="npc" title="Click a tile to place an NPC">NPC</button>
+    <button class="wtool" data-tool="enemy" title="Click a tile to place an enemy">Enemy</button>
+    <button class="wtool" data-tool="trigger" title="Drag a rect to place a trigger zone">Trigger</button>
+    <span id="w-hint" class="w-lbl"></span>
+  </div>
+
+  <div id="w-main">
+    <aside id="w-rooms">
+      <div class="w-sec">Rooms</div>
+      <div id="w-roomlist"></div>
+      <div class="w-btns">
+        <button id="w-addroom">Add Room</button>
+        <button id="w-delroom">Delete</button>
+      </div>
+      <div class="w-props">
+        <label>Name <input id="w-name" type="text"></label>
+        <label>World <select id="w-world">
+          <option value="zig">zig</option><option value="zag">zag</option><option value="both">both</option>
+        </select></label>
+        <label>Size <input id="w-w" type="number" min="4" max="128"> × <input id="w-h" type="number" min="4" max="128"></label>
+        <div class="w-btns">
+          <button id="w-renameroom" title="Change the room's key id (door links are updated)">Rename Key…</button>
+          <button id="w-resize" title="Rebuild the grid at this size (new tiles = floor, entities out of bounds dropped)">Resize</button>
+        </div>
+      </div>
+      <div class="w-sec">Properties</div>
+      <div id="w-entity" class="w-props"><span class="w-lbl">Nothing selected. Use Select, or place an entity.</span></div>
+    </aside>
+
+    <div id="w-canvaswrap">
+      <canvas id="w-grid"></canvas>
+      <div id="w-status" class="w-lbl"></div>
+    </div>
+
+    <aside id="w-dialogs">
+      <div class="w-sec">Dialogs</div>
+      <div id="w-dialoglist"></div>
+      <div class="w-btns">
+        <button id="w-adddialog">Add Dialog</button>
+        <button id="w-deldialog">Delete</button>
+      </div>
+      <div class="w-props">
+        <label>Key <input id="w-dkey" type="text" title="Dialog id (referenced by NPCs and triggers)"></label>
+        <label>Speaker <input id="w-dname" type="text"></label>
+        <div class="w-sec">Pages</div>
+        <div id="w-pages"></div>
+        <div class="w-btns">
+          <button id="w-addpage">+ Page</button>
+          <button id="w-delpage">− Page</button>
+        </div>
+      </div>
+      <div class="w-sec">File</div>
+      <div class="w-btns">
+        <button id="w-save" class="primary" title="Validate + save to localStorage (muzic-world)">Save</button>
+        <button id="w-load" title="Load muzic-world from localStorage">Load</button>
+        <button id="w-export" title="Download the whole world as GAME.BIN">Export GAME.BIN</button>
+        <button id="w-import" title="Import a GAME.BIN file">Import GAME.BIN</button>
+        <button id="w-new">New World</button>
+        <input type="file" id="w-file" accept=".bin,application/json,.json" hidden>
+      </div>
+    </aside>
+  </div>
+
+  <div id="w-help" class="w-lbl">
+    WORLD tab — one JSON world (<code>muzic-switch-world</code> v0): rooms with grid terrain
+    (<kbd>#</kbd> wall · <kbd>.</kbd> floor · <kbd>-</kbd> path), doors linking rooms, NPCs (sprite <code>NPC_1</code>…<code>NPC_15</code>),
+    enemies (their id can lock a door via <b>lockedBy</b>), trigger rects and paged dialogs.
+    Paint by dragging with a terrain tool; click with an entity tool to place; Select then <kbd>Delete</kbd> removes.
+    Save/Load = this browser only; Export GAME.BIN is the single file the game loads.
+  </div>
+</div><!-- /#page-world -->
+
 <div id="toast" role="status"></div>
 
 <!-- Manifest + shared modules. levelFormat.js must load before songs.js (custom level list). -->
@@ -91,6 +210,7 @@
 <script src="js/storage.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/levelFormat.js"></script>
+<script src="js/worldFormat.js"></script>
 <script src="js/songs.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/chart-generator.js"></script>
@@ -483,6 +603,7 @@
   document.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (window.DEVEDIT_TAB !== 'beatmap') return;   // WORLD tab owns the keyboard while active
     if (e.ctrlKey || e.metaKey) {
       if (e.key === 's' || e.key === 'S') { e.preventDefault(); saveLevel(); }
       else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); exportJSON(); }
@@ -545,11 +666,612 @@
   }
 
   /* ---------- boot ---------- */
+  window.DEVEDIT_TAB = 'beatmap';   // shared with the WORLD tab script below
   level = LevelFormat.createBlank('Untitled', '', '', 120, 0);
   Z.Songs.load(() => { fillSongs(); });
   syncInputsFromLevel();
   updateStats();
   requestAnimationFrame(frame);
+})();
+</script>
+<script>
+/* DevEdit.html — WORLD tab. Comprehensive dialogue + room + map maker/editor (Plan.md A2).
+   Edits a "muzic-switch-world" v0 object via js/worldFormat.js; persists to localStorage
+   ('muzic-world') and round-trips through GAME.BIN files. Pure DOM/canvas2D, no LittleJS. */
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const WF = window.WorldFormat;
+  const DIRS = WF.DIRS;
+  const NPC_SPRITES = [];
+  for (let i = 1; i <= 15; i++) NPC_SPRITES.push('NPC_' + i);
+
+  /* ---------- state ---------- */
+  let world = null;             // muzic-switch-world v0 object
+  let roomKey = null;           // key into world.rooms currently being edited
+  let dialogKey = null;         // key into world.dialogs currently being edited
+  let tool = 'wall';            // wall|floor|path|select|door|npc|enemy|trigger
+  let sel = null;               // { kind:'door'|'npc'|'enemy'|'trigger', item }
+  let painting = false;
+  let trigDrag = null;          // { x0, y0, x1, y1 } while dragging a trigger rect
+
+  /* ---------- toast (shared #toast element, own timer) ---------- */
+  let toastTimer = 0;
+  function toast(msg, ms) {
+    const t = $('toast'); t.textContent = msg; t.style.opacity = '1';
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = '0'; }, ms || 2400);
+  }
+
+  /* ---------- tabs ---------- */
+  function setTab(name) {
+    window.DEVEDIT_TAB = name;
+    $('page-beatmap').hidden = name !== 'beatmap';
+    $('page-world').hidden = name !== 'world';
+    document.querySelectorAll('.tabbtn').forEach(b => {
+      const on = b.dataset.tab === name;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on);
+    });
+    if (name === 'world') { ensureWorld(); refreshAll(); }
+  }
+  document.querySelectorAll('.tabbtn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+  /* ---------- world access ---------- */
+  function ensureWorld() {
+    if (!world) {
+      world = WF.getWorld() || WF.createBlank();
+      roomKey = Object.keys(world.rooms)[0] || null;
+      dialogKey = Object.keys(world.dialogs)[0] || null;
+    }
+    if (roomKey && !world.rooms[roomKey]) roomKey = Object.keys(world.rooms)[0] || null;
+    if (dialogKey && !world.dialogs[dialogKey]) dialogKey = Object.keys(world.dialogs)[0] || null;
+  }
+  const room = () => (world && roomKey ? world.rooms[roomKey] : null);
+  const roomKeys = () => (world ? Object.keys(world.rooms) : []);
+  const dialogKeys = () => (world ? Object.keys(world.dialogs) : []);
+  const entitiesOf = kind => { const r = room(); if (!r) return []; return kind === 'door' ? r.doors : kind === 'npc' ? r.npcs : kind === 'enemy' ? r.enemies : r.triggers; };
+
+  function uniqueId(list, prefix) {
+    let i = 1;
+    while (list.some(e => e.id === prefix + i)) i++;
+    return prefix + i;
+  }
+  function uniqueKey(obj, prefix) {
+    let i = 1;
+    while (obj[prefix + i]) i++;
+    return prefix + i;
+  }
+  function clampInt(v, min, max) {
+    v = parseInt(v, 10);
+    if (!isFinite(v)) v = min;
+    return Math.max(min, Math.min(max, v));
+  }
+  function makeTerrain(w, h) {
+    const rows = [];
+    for (let y = 0; y < h; y++) {
+      let row = '';
+      for (let x = 0; x < w; x++) row += (y === 0 || y === h - 1 || x === 0 || x === w - 1) ? '#' : '.';
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  /* ---------- room sidebar ---------- */
+  function refreshRooms() {
+    const list = $('w-roomlist'); list.textContent = '';
+    roomKeys().forEach(k => {
+      const r = world.rooms[k];
+      const b = document.createElement('button');
+      b.className = 'w-item' + (k === roomKey ? ' sel' : '');
+      const strong = document.createElement('div'); strong.textContent = r.name || k;
+      const small = document.createElement('small');
+      small.textContent = k + ' · ' + r.world + ' · ' + r.size[0] + '×' + r.size[1];
+      b.append(strong, small);
+      b.addEventListener('click', () => { roomKey = k; sel = null; refreshAll(); });
+      list.appendChild(b);
+    });
+    const r = room();
+    $('w-name').value = r ? r.name : '';
+    $('w-world').value = r ? r.world : 'both';
+    $('w-w').value = r ? r.size[0] : 20;
+    $('w-h').value = r ? r.size[1] : 15;
+  }
+
+  $('w-addroom').addEventListener('click', () => {
+    ensureWorld();
+    const k = uniqueKey(world.rooms, 'room');
+    const w = 20, h = 15;
+    world.rooms[k] = {
+      name: 'Room ' + (roomKeys().length + 1), world: 'both', size: [w, h],
+      terrain: makeTerrain(w, h), doors: [], npcs: [], enemies: [], triggers: []
+    };
+    roomKey = k; sel = null;
+    refreshAll();
+    toast('Added room "' + k + '"');
+  });
+
+  $('w-delroom').addEventListener('click', () => {
+    if (!room()) { toast('No room selected.'); return; }
+    const doomed = roomKey;
+    if (!confirm('Delete room "' + doomed + '" (' + world.rooms[doomed].name + ')?\nDoors in other rooms pointing here will be removed.')) return;
+    delete world.rooms[doomed];
+    // drop dangling door links so the world stays valid
+    roomKeys().forEach(k => { world.rooms[k].doors = world.rooms[k].doors.filter(d => d.to !== doomed); });
+    roomKey = roomKeys()[0] || null;
+    sel = null;
+    refreshAll();
+    toast('Deleted room "' + doomed + '"');
+  });
+
+  $('w-renameroom').addEventListener('click', () => {
+    if (!room()) { toast('No room selected.'); return; }
+    const nu = (prompt('New key for room "' + roomKey + '":', roomKey) || '').trim();
+    if (!nu || nu === roomKey) return;
+    if (!/^[A-Za-z0-9_-]+$/.test(nu)) { toast('Keys may only contain letters, digits, - and _.'); return; }
+    if (world.rooms[nu]) { toast('Room "' + nu + '" already exists.'); return; }
+    world.rooms[nu] = world.rooms[roomKey];
+    delete world.rooms[roomKey];
+    roomKeys().forEach(k => world.rooms[k].doors.forEach(d => { if (d.to === roomKey) d.to = nu; }));
+    roomKey = nu;
+    refreshAll();
+    toast('Renamed room → "' + nu + '" (door links updated)');
+  });
+
+  $('w-resize').addEventListener('click', () => {
+    const r = room(); if (!r) { toast('No room selected.'); return; }
+    const W = clampInt($('w-w').value, 4, 128), H = clampInt($('w-h').value, 4, 128);
+    const old = r.terrain, ow = r.size[0], oh = r.size[1];
+    const rows = [];
+    for (let y = 0; y < H; y++) {
+      let row = '';
+      for (let x = 0; x < W; x++) row += (y < oh && x < ow) ? old[y][x] : '.';
+      rows.push(row);
+    }
+    r.size = [W, H]; r.terrain = rows;
+    const inB = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+    r.doors = r.doors.filter(d => inB(d.x, d.y));
+    r.npcs = r.npcs.filter(n => inB(n.x, n.y));
+    r.enemies = r.enemies.filter(e => inB(e.x, e.y));
+    r.triggers = r.triggers.filter(t => t.x >= 0 && t.y >= 0 && t.x + t.w <= W && t.y + t.h <= H);
+    if (sel && entitiesOf(sel.kind).indexOf(sel.item) < 0) sel = null;
+    refreshAll();
+    toast('Resized "' + roomKey + '" to ' + W + '×' + H);
+  });
+
+  $('w-name').addEventListener('change', () => { const r = room(); if (r) { r.name = $('w-name').value.trim() || r.name; refreshRooms(); } });
+  $('w-world').addEventListener('change', () => { const r = room(); if (r) { r.world = $('w-world').value; refreshRooms(); } });
+
+  /* ---------- tools ---------- */
+  document.querySelectorAll('.wtool').forEach(b => b.addEventListener('click', () => {
+    tool = b.dataset.tool;
+    document.querySelectorAll('.wtool').forEach(x => x.classList.toggle('primary', x === b));
+    updateHint();
+  }));
+  function updateHint() {
+    const hints = {
+      wall: 'Drag to paint # walls', floor: 'Drag to paint . floor', path: 'Drag to paint - path',
+      select: 'Click an entity to edit · Delete key removes it',
+      door: 'Click a tile to place a door (set To room / TX,TY below)', npc: 'Click a tile to place an NPC',
+      enemy: 'Click a tile to place an enemy (id can lock a door)', trigger: 'Drag a rect for a trigger zone'
+    };
+    $('w-hint').textContent = hints[tool] || '';
+  }
+
+  /* ---------- grid canvas ---------- */
+  const cv = $('w-grid'), c2 = cv.getContext('2d');
+  let cell = 16, gx = 0, gy = 0;    // computed in drawGrid for hit-testing
+  function fitCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    }
+    c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { w, h };
+  }
+  function drawGrid() {
+    const r = room(); if (!r) return;
+    const { w, h } = fitCanvas();
+    c2.clearRect(0, 0, w, h);
+    cell = Math.max(6, Math.floor(Math.min((w - 12) / r.size[0], (h - 12) / r.size[1])));
+    gx = Math.floor((w - cell * r.size[0]) / 2);
+    gy = Math.floor((h - cell * r.size[1]) / 2);
+    // terrain
+    for (let y = 0; y < r.size[1]; y++) {
+      for (let x = 0; x < r.size[0]; x++) {
+        const ch = r.terrain[y][x];
+        c2.fillStyle = ch === '#' ? '#26262f' : ch === '-' ? '#3a2f5c' : '#101017';
+        c2.fillRect(gx + x * cell, gy + y * cell, cell, cell);
+      }
+    }
+    // grid lines
+    c2.strokeStyle = 'rgba(255,255,255,.05)';
+    c2.beginPath();
+    for (let x = 0; x <= r.size[0]; x++) { c2.moveTo(gx + x * cell + .5, gy); c2.lineTo(gx + x * cell + .5, gy + r.size[1] * cell); }
+    for (let y = 0; y <= r.size[1]; y++) { c2.moveTo(gx, gy + y * cell + .5); c2.lineTo(gx + r.size[0] * cell, gy + y * cell + .5); }
+    c2.stroke();
+    // triggers (under point entities)
+    r.triggers.forEach(t => {
+      c2.fillStyle = 'rgba(255,200,80,.15)';
+      c2.fillRect(gx + t.x * cell, gy + t.y * cell, t.w * cell, t.h * cell);
+      c2.strokeStyle = 'rgba(255,200,80,.6)';
+      c2.strokeRect(gx + t.x * cell + .5, gy + t.y * cell + .5, t.w * cell - 1, t.h * cell - 1);
+      if (sel && sel.kind === 'trigger' && sel.item === t) highlight(gx + t.x * cell, gy + t.y * cell, t.w * cell, t.h * cell);
+    });
+    if (trigDrag) {
+      const x0 = Math.min(trigDrag.x0, trigDrag.x1), y0 = Math.min(trigDrag.y0, trigDrag.y1);
+      const x1 = Math.max(trigDrag.x0, trigDrag.x1), y1 = Math.max(trigDrag.y0, trigDrag.y1);
+      c2.fillStyle = 'rgba(124,92,255,.2)';
+      c2.fillRect(gx + x0 * cell, gy + y0 * cell, (x1 - x0 + 1) * cell, (y1 - y0 + 1) * cell);
+      c2.strokeStyle = '#7c5cff';
+      c2.strokeRect(gx + x0 * cell + .5, gy + y0 * cell + .5, (x1 - x0 + 1) * cell - 1, (y1 - y0 + 1) * cell - 1);
+    }
+    // doors
+    r.doors.forEach(d => {
+      const px = gx + d.x * cell, py = gy + d.y * cell;
+      c2.fillStyle = d.lockedBy ? '#c0392b' : '#2f8f83';
+      c2.fillRect(px + 1, py + 1, cell - 2, cell - 2);
+      drawGlyph(px, py, 'D');
+      if (sel && sel.kind === 'door' && sel.item === d) highlight(px, py, cell, cell);
+    });
+    // npcs
+    r.npcs.forEach(n => {
+      const px = gx + n.x * cell, py = gy + n.y * cell;
+      c2.fillStyle = '#7c5cff';
+      c2.beginPath(); c2.arc(px + cell / 2, py + cell / 2, cell * .42, 0, 7); c2.fill();
+      drawGlyph(px, py, 'N');
+      if (sel && sel.kind === 'npc' && sel.item === n) highlight(px, py, cell, cell);
+    });
+    // enemies
+    r.enemies.forEach(n => {
+      const px = gx + n.x * cell, py = gy + n.y * cell;
+      c2.fillStyle = '#e67e22';
+      c2.beginPath();
+      c2.moveTo(px + cell / 2, py + 1); c2.lineTo(px + cell - 1, py + cell / 2);
+      c2.lineTo(px + cell / 2, py + cell - 1); c2.lineTo(px + 1, py + cell / 2);
+      c2.closePath(); c2.fill();
+      drawGlyph(px, py, 'E');
+      if (sel && sel.kind === 'enemy' && sel.item === n) highlight(px, py, cell, cell);
+    });
+    // status line
+    $('w-status').textContent = roomKey + ' · ' + r.size[0] + '×' + r.size[1] +
+      ' · doors ' + r.doors.length + ' · npcs ' + r.npcs.length +
+      ' · enemies ' + r.enemies.length + ' · triggers ' + r.triggers.length;
+  }
+  function drawGlyph(px, py, letter) {
+    if (cell < 12) return;
+    c2.fillStyle = '#fff';
+    c2.font = 'bold ' + Math.floor(cell * .6) + 'px system-ui';
+    c2.textAlign = 'center';
+    c2.fillText(letter, px + cell / 2, py + cell * .72);
+    c2.textAlign = 'left';
+  }
+  function highlight(px, py, w, h) {
+    c2.strokeStyle = '#fff'; c2.lineWidth = 2;
+    c2.strokeRect(px - 1, py - 1, w + 2, h + 2);
+    c2.lineWidth = 1;
+  }
+
+  function tileAt(e) {
+    const r = room(); if (!r) return null;
+    const rect = cv.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left - gx) / cell);
+    const y = Math.floor((e.clientY - rect.top - gy) / cell);
+    if (x < 0 || y < 0 || x >= r.size[0] || y >= r.size[1]) return null;
+    return { x, y };
+  }
+  function paintAt(t) {
+    const r = room(); if (!r || !t) return;
+    const ch = tool === 'wall' ? '#' : tool === 'floor' ? '.' : '-';
+    if (r.terrain[t.y][t.x] === ch) return;
+    r.terrain[t.y] = r.terrain[t.y].slice(0, t.x) + ch + r.terrain[t.y].slice(t.x + 1);
+    drawGrid();
+  }
+  function hitEntity(t) {
+    const r = room(); if (!r || !t) return null;
+    // point entities win over triggers on the same tile
+    const pts = [['npc', r.npcs], ['enemy', r.enemies], ['door', r.doors]];
+    for (const [kind, list] of pts) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].x === t.x && list[i].y === t.y) return { kind, item: list[i] };
+      }
+    }
+    for (let i = r.triggers.length - 1; i >= 0; i--) {
+      const g = r.triggers[i];
+      if (t.x >= g.x && t.x < g.x + g.w && t.y >= g.y && t.y < g.y + g.h) return { kind: 'trigger', item: g };
+    }
+    return null;
+  }
+
+  cv.addEventListener('mousedown', e => {
+    ensureWorld(); if (!room()) return;
+    const t = tileAt(e); if (!t) return;
+    if (tool === 'wall' || tool === 'floor' || tool === 'path') { painting = true; paintAt(t); return; }
+    if (tool === 'trigger') { trigDrag = { x0: t.x, y0: t.y, x1: t.x, y1: t.y }; return; }
+    if (tool === 'door' || tool === 'npc' || tool === 'enemy') { placeEntity(tool, t); return; }
+    if (tool === 'select') { sel = hitEntity(t); refreshEntity(); drawGrid(); }
+  });
+  window.addEventListener('mousemove', e => {
+    if (window.DEVEDIT_TAB !== 'world') return;
+    if (painting) { paintAt(tileAt(e)); return; }
+    if (trigDrag) { const t = tileAt(e); if (t) { trigDrag.x1 = t.x; trigDrag.y1 = t.y; drawGrid(); } }
+  });
+  window.addEventListener('mouseup', () => {
+    if (trigDrag) { const d = trigDrag; trigDrag = null; commitTrigger(d); }
+    painting = false;
+  });
+
+  function placeEntity(kind, t) {
+    const r = room();
+    if (kind === 'door') {
+      const d = { id: uniqueId(r.doors, 'd'), x: t.x, y: t.y, to: roomKey, tx: 1, ty: 1 };
+      const other = roomKeys().find(k => k !== roomKey);
+      if (other) { d.to = other; }
+      r.doors.push(d); sel = { kind: 'door', item: d };
+    } else if (kind === 'npc') {
+      const n = { id: uniqueId(r.npcs, 'npc'), sprite: 'NPC_1', x: t.x, y: t.y, dir: 'down' };
+      const dk = dialogKeys()[0]; if (dk) n.dialog = dk;
+      r.npcs.push(n); sel = { kind: 'npc', item: n };
+    } else {
+      const n = { id: uniqueId(r.enemies, 'enemy'), x: t.x, y: t.y, hp: 20, name: 'Enemy ' + (r.enemies.length + 1) };
+      r.enemies.push(n); sel = { kind: 'enemy', item: n };
+    }
+    refreshEntity(); drawGrid();
+  }
+  function commitTrigger(d) {
+    const r = room(); if (!r) return;
+    const t = {
+      x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1),
+      w: Math.abs(d.x1 - d.x0) + 1, h: Math.abs(d.y1 - d.y0) + 1
+    };
+    const dk = dialogKeys()[0]; if (dk) t.dialog = dk;
+    r.triggers.push(t); sel = { kind: 'trigger', item: t };
+    refreshEntity(); drawGrid();
+  }
+  function deleteSelected() {
+    if (!sel) return;
+    const list = entitiesOf(sel.kind);
+    const i = list.indexOf(sel.item);
+    if (i >= 0) list.splice(i, 1);
+    sel = null; refreshEntity(); drawGrid();
+  }
+  document.addEventListener('keydown', e => {
+    if (window.DEVEDIT_TAB !== 'world') return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && sel) { e.preventDefault(); deleteSelected(); }
+  });
+
+  /* ---------- entity properties panel ---------- */
+  function refreshEntity() {
+    const box = $('w-entity'); box.textContent = '';
+    if (!sel) { box.innerHTML = '<span class="w-lbl">Nothing selected. Use Select, or place an entity.</span>'; return; }
+    if (entitiesOf(sel.kind).indexOf(sel.item) < 0) { sel = null; refreshEntity(); return; }
+    const it = sel.item, r = room();
+    const mk = (labelText, inputEl) => { const l = document.createElement('label'); l.append(labelText + ' ', inputEl); box.appendChild(l); return l; };
+    const tIn = (val, w) => { const i = document.createElement('input'); i.type = 'text'; i.value = val == null ? '' : val; if (w) i.style.width = w + 'px'; return i; };
+    const nIn = (val, min, max) => { const i = document.createElement('input'); i.type = 'number'; i.value = val; if (min != null) i.min = min; if (max != null) i.max = max; return i; };
+    const selIn = (opts, val) => {
+      const s = document.createElement('select');
+      opts.forEach(o => { const op = document.createElement('option'); op.value = o.v; op.textContent = o.t; if (String(o.v) === String(val)) op.selected = true; s.appendChild(op); });
+      return s;
+    };
+    const head = document.createElement('div');
+    head.className = 'w-lbl';
+    head.textContent = sel.kind.toUpperCase() + ' @ ' + it.x + ',' + it.y + (sel.kind === 'trigger' ? ' (' + it.w + '×' + it.h + ')' : '');
+    box.appendChild(head);
+
+    if (sel.kind === 'door') {
+      const id = tIn(it.id, 90); id.addEventListener('change', () => { it.id = id.value.trim() || it.id; }); mk('ID', id);
+      const to = selIn(roomKeys().map(k => ({ v: k, t: k + ' (' + world.rooms[k].name + ')' })), it.to);
+      to.addEventListener('change', () => { it.to = to.value; }); mk('To room', to);
+      const tx = nIn(it.tx, 0), ty = nIn(it.ty, 0);
+      tx.addEventListener('change', () => { it.tx = clampInt(tx.value, 0, 127); });
+      ty.addEventListener('change', () => { it.ty = clampInt(ty.value, 0, 127); });
+      mk('TX', tx); mk('TY', ty);
+      const lock = tIn(it.lockedBy || '', 120); lock.placeholder = 'none — enemy id';
+      lock.addEventListener('change', () => { const v = lock.value.trim(); if (v) it.lockedBy = v; else delete it.lockedBy; drawGrid(); });
+      mk('lockedBy', lock);
+    } else if (sel.kind === 'npc') {
+      const id = tIn(it.id, 90); id.addEventListener('change', () => { it.id = id.value.trim() || it.id; }); mk('ID', id);
+      const sp = selIn(NPC_SPRITES.map(s => ({ v: s, t: s })), it.sprite);
+      sp.addEventListener('change', () => { it.sprite = sp.value; }); mk('Sprite', sp);
+      const x = nIn(it.x, 0, r.size[0] - 1), y = nIn(it.y, 0, r.size[1] - 1);
+      x.addEventListener('change', () => { it.x = clampInt(x.value, 0, r.size[0] - 1); drawGrid(); });
+      y.addEventListener('change', () => { it.y = clampInt(y.value, 0, r.size[1] - 1); drawGrid(); });
+      mk('X', x); mk('Y', y);
+      const dir = selIn(DIRS.map(d => ({ v: d, t: d })), it.dir || 'down');
+      dir.addEventListener('change', () => { it.dir = dir.value; }); mk('Dir', dir);
+      mk('Dialog', dialogSelect(it, false));
+    } else if (sel.kind === 'enemy') {
+      const id = tIn(it.id, 90); id.addEventListener('change', () => { it.id = id.value.trim() || it.id; }); mk('ID', id);
+      const nm = tIn(it.name, 140); nm.addEventListener('change', () => { it.name = nm.value.trim() || it.name; }); mk('Name', nm);
+      const x = nIn(it.x, 0, r.size[0] - 1), y = nIn(it.y, 0, r.size[1] - 1);
+      x.addEventListener('change', () => { it.x = clampInt(x.value, 0, r.size[0] - 1); drawGrid(); });
+      y.addEventListener('change', () => { it.y = clampInt(y.value, 0, r.size[1] - 1); drawGrid(); });
+      mk('X', x); mk('Y', y);
+      const hp = nIn(it.hp, 1); hp.addEventListener('change', () => { it.hp = clampInt(hp.value, 1, 9999); }); mk('HP', hp);
+      const hint = document.createElement('div'); hint.className = 'w-lbl';
+      hint.textContent = 'Doors with lockedBy = "' + it.id + '" stay shut until this enemy is defeated.';
+      box.appendChild(hint);
+    } else { // trigger
+      const x = nIn(it.x, 0, r.size[0] - 1), y = nIn(it.y, 0, r.size[1] - 1);
+      x.addEventListener('change', () => { it.x = clampInt(x.value, 0, r.size[0] - 1); drawGrid(); });
+      y.addEventListener('change', () => { it.y = clampInt(y.value, 0, r.size[1] - 1); drawGrid(); });
+      mk('X', x); mk('Y', y);
+      const w = nIn(it.w, 1, r.size[0]), h = nIn(it.h, 1, r.size[1]);
+      w.addEventListener('change', () => { it.w = clampInt(w.value, 1, r.size[0]); drawGrid(); });
+      h.addEventListener('change', () => { it.h = clampInt(h.value, 1, r.size[1]); drawGrid(); });
+      mk('W', w); mk('H', h);
+      mk('Dialog', dialogSelect(it, true));
+    }
+    const del = document.createElement('button');
+    del.className = 'w-danger'; del.textContent = 'Delete ' + sel.kind;
+    del.addEventListener('click', deleteSelected);
+    box.appendChild(del);
+  }
+  function dialogSelect(it, required) {
+    const opts = required ? [] : [{ v: '', t: '— none —' }];
+    dialogKeys().forEach(k => opts.push({ v: k, t: k + ' ("' + (world.dialogs[k].name || '?') + '")' }));
+    if (required && !it.dialog && opts.length) it.dialog = opts[0].v;
+    const s = selIn(opts, it.dialog || '');
+    s.addEventListener('change', () => { if (s.value) it.dialog = s.value; else delete it.dialog; });
+    return s;
+  }
+
+  /* ---------- dialog editor ---------- */
+  function refreshDialogs() {
+    const list = $('w-dialoglist'); list.textContent = '';
+    dialogKeys().forEach(k => {
+      const d = world.dialogs[k];
+      const b = document.createElement('button');
+      b.className = 'w-item' + (k === dialogKey ? ' sel' : '');
+      const strong = document.createElement('div'); strong.textContent = d.name || k;
+      const small = document.createElement('small'); small.textContent = k + ' · ' + (d.pages ? d.pages.length : 0) + ' page(s)';
+      b.append(strong, small);
+      b.addEventListener('click', () => { dialogKey = k; refreshDialogs(); });
+      list.appendChild(b);
+    });
+    refreshDialogEditor();
+  }
+
+  function refreshDialogEditor() {
+    const d = dialogKey ? world.dialogs[dialogKey] : null;
+    $('w-dkey').value = d ? dialogKey : '';
+    $('w-dname').value = d ? d.name : '';
+    const pages = $('w-pages'); pages.textContent = '';
+    if (d) {
+      (d.pages || []).forEach((p, i) => {
+        const row = document.createElement('div'); row.className = 'w-page';
+        const ta = document.createElement('textarea'); ta.value = p; ta.rows = 2;
+        ta.addEventListener('input', () => { d.pages[i] = ta.value; });
+        const up = document.createElement('button'); up.className = 'mini'; up.textContent = '↑'; up.title = 'Move page up';
+        up.disabled = i === 0;
+        up.addEventListener('click', () => { const pp = d.pages; const tmp = pp[i - 1]; pp[i - 1] = pp[i]; pp[i] = tmp; refreshDialogEditor(); });
+        const rm = document.createElement('button'); rm.className = 'mini'; rm.textContent = '×'; rm.title = 'Remove page';
+        rm.disabled = d.pages.length <= 1;
+        rm.addEventListener('click', () => { d.pages.splice(i, 1); refreshDialogEditor(); });
+        row.append(ta, up, rm); pages.appendChild(row);
+      });
+    } else {
+      const s = document.createElement('span'); s.className = 'w-lbl'; s.textContent = 'No dialog selected.';
+      pages.appendChild(s);
+    }
+    ['w-dkey', 'w-dname', 'w-addpage', 'w-delpage', 'w-deldialog'].forEach(id => { $(id).disabled = !d; });
+  }
+
+  $('w-adddialog').addEventListener('click', () => {
+    ensureWorld();
+    const k = uniqueKey(world.dialogs, 'dialog');
+    world.dialogs[k] = { name: 'Speaker', pages: ['Hello!'] };
+    dialogKey = k; refreshDialogs(); refreshEntity();
+    toast('Added dialog "' + k + '"');
+  });
+  $('w-deldialog').addEventListener('click', () => {
+    if (!dialogKey) return;
+    const doomed = dialogKey;
+    // count references first, mutate only after the user confirms
+    let refs = 0;
+    roomKeys().forEach(k => {
+      refs += world.rooms[k].npcs.filter(n => n.dialog === doomed).length;
+      refs += world.rooms[k].triggers.filter(t => t.dialog === doomed).length;
+    });
+    if (!confirm('Delete dialog "' + doomed + '"?' + (refs ? '\n' + refs + ' reference(s) will be cleared/dropped.' : ''))) return;
+    roomKeys().forEach(k => {
+      world.rooms[k].npcs.forEach(n => { if (n.dialog === doomed) delete n.dialog; });
+      world.rooms[k].triggers = world.rooms[k].triggers.filter(t => t.dialog !== doomed);
+    });
+    delete world.dialogs[doomed];
+    dialogKey = dialogKeys()[0] || null;
+    refreshDialogs(); refreshEntity();
+    toast('Deleted dialog "' + doomed + '"');
+  });
+  $('w-dkey').addEventListener('change', () => {
+    if (!dialogKey) return;
+    const nu = $('w-dkey').value.trim();
+    if (!nu || nu === dialogKey) { $('w-dkey').value = dialogKey; return; }
+    if (!/^[A-Za-z0-9_-]+$/.test(nu)) { toast('Keys may only contain letters, digits, - and _.'); $('w-dkey').value = dialogKey; return; }
+    if (world.dialogs[nu]) { toast('Dialog "' + nu + '" already exists.'); $('w-dkey').value = dialogKey; return; }
+    world.dialogs[nu] = world.dialogs[dialogKey];
+    delete world.dialogs[dialogKey];
+    roomKeys().forEach(k => {
+      world.rooms[k].npcs.forEach(n => { if (n.dialog === dialogKey) n.dialog = nu; });
+      world.rooms[k].triggers.forEach(t => { if (t.dialog === dialogKey) t.dialog = nu; });
+    });
+    dialogKey = nu;
+    refreshDialogs(); refreshEntity();
+    toast('Renamed dialog → "' + nu + '"');
+  });
+  $('w-dname').addEventListener('change', () => {
+    const d = dialogKey ? world.dialogs[dialogKey] : null;
+    if (d) { d.name = $('w-dname').value.trim() || d.name; refreshDialogs(); }
+  });
+  $('w-addpage').addEventListener('click', () => {
+    const d = dialogKey ? world.dialogs[dialogKey] : null;
+    if (d) { d.pages.push('New page…'); refreshDialogEditor(); }
+  });
+  $('w-delpage').addEventListener('click', () => {
+    const d = dialogKey ? world.dialogs[dialogKey] : null;
+    if (d && d.pages.length > 1) { d.pages.pop(); refreshDialogEditor(); }
+  });
+
+  /* ---------- file: Save / Load / Export GAME.BIN / Import / New ---------- */
+  function saveWorld() {
+    ensureWorld();
+    const res = WF.save(world);
+    if (res.saved) toast('Saved to this browser (localStorage "' + WF.LS_KEY + '")');
+    else toast('Not saved: ' + res.errors[0] + (res.errors.length > 1 ? ' (+' + (res.errors.length - 1) + ' more)' : ''), 4500);
+  }
+  function loadWorld() {
+    const w = WF.getWorld();
+    if (!w) { toast('No valid saved world in this browser yet.'); return; }
+    world = w; roomKey = roomKeys()[0] || null; dialogKey = dialogKeys()[0] || null; sel = null;
+    refreshAll();
+    toast('Loaded saved world');
+  }
+  function exportBin() {
+    ensureWorld();
+    const v = WF.validate(world);
+    if (!v.valid) toast('Exporting anyway — ' + v.errors[0] + (v.errors.length > 1 ? ' (+' + (v.errors.length - 1) + ' more)' : ''), 4500);
+    const blob = new Blob([WF.toJSON(world)], { type: 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'GAME.BIN';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    if (v.valid) toast('Exported GAME.BIN (' + roomKeys().length + ' room(s), ' + dialogKeys().length + ' dialog(s))');
+  }
+  function importBinFile(file) {
+    const r = new FileReader();
+    r.onload = () => {
+      const res = WF.fromJSON(String(r.result));
+      if (!res.valid) { toast('Invalid GAME.BIN: ' + res.errors[0] + (res.errors.length > 1 ? ' (+' + (res.errors.length - 1) + ' more)' : ''), 5000); return; }
+      world = res.world; roomKey = roomKeys()[0] || null; dialogKey = dialogKeys()[0] || null; sel = null;
+      refreshAll();
+      toast('Imported GAME.BIN — ' + roomKeys().length + ' room(s), ' + dialogKeys().length + ' dialog(s)');
+    };
+    r.readAsText(file);
+  }
+  $('w-save').addEventListener('click', saveWorld);
+  $('w-load').addEventListener('click', loadWorld);
+  $('w-export').addEventListener('click', exportBin);
+  $('w-import').addEventListener('click', () => $('w-file').click());
+  $('w-file').addEventListener('change', () => {
+    const f = $('w-file').files[0];
+    if (f) importBinFile(f);
+    $('w-file').value = '';
+  });
+  $('w-new').addEventListener('click', () => {
+    if (!confirm('Start a NEW blank world? Unsaved changes are lost (Save/Export first to keep them).')) return;
+    world = WF.createBlank();
+    roomKey = roomKeys()[0] || null; dialogKey = dialogKeys()[0] || null; sel = null;
+    refreshAll();
+    toast('New world created');
+  });
+
+  /* ---------- boot ---------- */
+  function refreshAll() { refreshRooms(); refreshDialogs(); refreshEntity(); drawGrid(); }
+  updateHint();
 })();
 </script>
 </body>

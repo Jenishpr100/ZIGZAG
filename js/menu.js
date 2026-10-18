@@ -28,7 +28,13 @@
   /* ---------- title / nav ---------- */
   function buildLogo() {
     const l = $('#logo'); l.textContent = '';
-    'ZIGZAG'.split('').forEach(ch => { const s = document.createElement('span'); s.textContent = ch; l.appendChild(s); });
+    // A1: game title is MuZiC "Switch" — one <span> per char keeps the zigzag CSS animation
+    // (css/styles.css .logo span:nth-child(odd/even)); spaces render as NBSP so spans keep them.
+    'MuZiC "Switch"'.split('').forEach(ch => {
+      const s = document.createElement('span');
+      s.textContent = ch === ' ' ? '\u00A0' : ch;
+      l.appendChild(s);
+    });
   }
   function bindNav() {
     $$('[data-go]').forEach(b => b.addEventListener('click', () => { Z.Audio.unlock(); Z.Audio.sfx('ui'); M.go(b.dataset.go); }));
