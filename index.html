@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ZIGZAG</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<!-- Everything is plain scripts + relative paths so this file works by double-clicking (file://). -->
+<main id="app">
+
+  <!-- MAIN MENU -->
+  <section class="screen" id="s-menu" aria-label="Main menu">
+    <h1 class="logo" id="logo" aria-label="ZIGZAG"></h1>
+    <p class="tag">Tap. Hold. Drag the zigzag.</p>
+    <nav class="stack">
+      <button class="btn big" id="btn-play">Play <small id="play-sub"></small></button>
+      <button class="btn" data-go="songs">Song Select</button>
+      <button class="btn" data-go="settings">Settings</button>
+      <button class="btn" data-go="how">How to Play</button>
+      <button class="btn" data-go="credits">Credits</button>
+    </nav>
+    <div class="themebar"><span>Theme</span><div class="seg theme-seg" role="group" aria-label="Theme"></div>
+      <button class="btn mini fs-btn" aria-label="Toggle fullscreen">Fullscreen</button></div>
+  </section>
+
+  <!-- SONG SELECT -->
+  <section class="screen" id="s-songs" aria-label="Song select">
+    <header class="bar"><button class="btn mini" data-go="menu">Back</button><h2>Song Select</h2></header>
+    <div class="songs-grid">
+      <div class="panel"><ul id="song-list" class="song-list"></ul>
+        <p id="song-empty" class="note" hidden>No songs yet. Put MP3 files named like <code>1-My Song.mp3</code> in the songs folder, then list them in <code>songs/songs.js</code>. See README.md.</p>
+      </div>
+      <div class="panel detail">
+        <h3 id="d-name">—</h3>
+        <dl class="facts">
+          <div><dt>Song ID</dt><dd id="d-id">—</dd></div>
+          <div><dt>BPM</dt><dd id="d-bpm">—</dd></div>
+          <div><dt>Length</dt><dd id="d-len">—</dd></div>
+          <div><dt>Rating</dt><dd id="d-stars">—</dd></div>
+          <div><dt>Best</dt><dd id="d-best">—</dd></div>
+        </dl>
+        <label class="lbl">Difficulty</label><div class="seg diff-seg" role="group" aria-label="Difficulty"></div>
+        <label class="lbl" for="seed-songs">Seed <span class="hint" id="seed-hint-songs"></span></label>
+        <div class="row"><input id="seed-songs" class="seed-input" type="text" maxlength="40" autocomplete="off" spellcheck="false">
+          <button class="btn mini seed-rand">Random Seed</button></div>
+        <canvas id="theme-preview" width="320" height="90" aria-label="Theme preview"></canvas>
+        <p id="d-msg" class="note" role="status"></p>
+        <div class="row"><button class="btn" id="btn-preview">Preview</button><button class="btn big" id="btn-start">Play</button></div>
+      </div>
+    </div>
+    <details class="panel notices"><summary>Song list notices (<span id="n-count">0</span>)</summary>
+      <ul id="notices"></ul>
+      <p class="note">BPM source: <b id="bpm-src"></b>. Browsers usually block reading songs.bmp from a double-clicked page, so a copy lives in songs/songs.js. You can also load your edited file here:</p>
+      <div class="row"><button class="btn mini" id="btn-import">Load songs.bmp…</button><button class="btn mini" id="btn-unimport">Use built-in list</button>
+        <input type="file" id="file-bmp" accept=".bmp,.txt,text/plain" hidden></div>
+    </details>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="screen" id="s-settings" aria-label="Settings">
+    <header class="bar"><button class="btn mini" data-go="menu">Back</button><h2>Settings</h2></header>
+    <div class="panel form">
+      <label class="field">Master volume <input type="range" id="set-master" min="0" max="100"><output></output></label>
+      <label class="field">Music volume <input type="range" id="set-music" min="0" max="100"><output></output></label>
+      <label class="field">Sound-effect volume <input type="range" id="set-sfx" min="0" max="100"><output></output></label>
+      <label class="field">Timing offset (ms) <input type="range" id="set-offset" min="-300" max="300" step="5"><output></output></label>
+      <p class="note">Positive = notes arrive later. If you hit late, lower it; if you hit early, raise it.</p>
+      <label class="lbl" for="seed-settings">Seed <span class="hint" id="seed-hint-settings"></span></label>
+      <div class="row"><input id="seed-settings" class="seed-input" type="text" maxlength="40" autocomplete="off" spellcheck="false"><button class="btn mini seed-rand">Random Seed</button></div>
+      <label class="lbl">Difficulty</label><div class="seg diff-seg" role="group" aria-label="Difficulty"></div>
+      <label class="lbl">Theme</label><div class="seg theme-seg" role="group" aria-label="Theme"></div>
+      <label class="check"><input type="checkbox" id="set-reducedMotion"> Reduced motion</label>
+      <label class="check"><input type="checkbox" id="set-shake"> Screen shake on misses</label>
+      <label class="check"><input type="checkbox" id="set-hitFx"> Hit effects</label>
+      <label class="check"><input type="checkbox" id="set-practice"> Practice mode (cannot fail)</label>
+      <div class="row"><button class="btn mini fs-btn">Toggle fullscreen</button><button class="btn mini" id="btn-reset">Reset settings</button></div>
+    </div>
+  </section>
+
+  <!-- HOW TO PLAY -->
+  <section class="screen" id="s-how" aria-label="How to play">
+    <header class="bar"><button class="btn mini" data-go="menu">Back</button><h2>How to Play</h2></header>
+    <div class="panel how">
+      <p>Notes slide down four lanes toward the white line at the bottom. Act on them the moment they touch the line — the dashed path shows where the next notes go.</p>
+      <div class="cards">
+        <article><svg viewBox="0 0 120 80" aria-hidden="true"><rect x="30" y="22" width="60" height="22" rx="8" class="s-tap"/><line x1="10" y1="62" x2="110" y2="62" class="s-line"/></svg>
+          <h4>Tap</h4><p>Click, touch or press the lane key as the note reaches the line.</p></article>
+        <article><svg viewBox="0 0 120 80" aria-hidden="true"><rect x="45" y="8" width="30" height="52" rx="8" class="s-hold2"/><rect x="30" y="44" width="60" height="22" rx="8" class="s-hold"/><line x1="10" y1="70" x2="110" y2="70" class="s-line"/></svg>
+          <h4>Hold</h4><p>Press when the head arrives and keep holding until the tail passes the line.</p></article>
+        <article><svg viewBox="0 0 120 80" aria-hidden="true"><polyline points="35,70 85,45 35,22 85,6" class="s-drag"/><circle cx="35" cy="70" r="9" class="s-head"/></svg>
+          <h4>Drag</h4><p>Press the round head, then keep the button down and slide left and right along the zigzag ribbon.</p></article>
+      </div>
+      <h4>Controls</h4>
+      <ul class="keys">
+        <li><b>Mouse / trackpad:</b> click, hold the button, drag.</li>
+        <li><b>Touchscreen:</b> tap, hold your finger, slide.</li>
+        <li><b>Keyboard (optional):</b> <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> are lanes 1–4. Hold keys for holds; for drags, hold the key of the lane the ribbon is in and roll to the next key as it moves.</li>
+        <li><kbd>Esc</kbd> / <kbd>P</kbd> / <kbd>Space</kbd> pause, <kbd>R</kbd> restart. Menus: <kbd>Tab</kbd>, arrow keys and <kbd>Enter</kbd>.</li>
+      </ul>
+      <h4>Scoring</h4>
+      <ul class="keys">
+        <li><b>Perfect, Great, Good</b> depend on how close your timing is. A miss breaks your combo and drains health.</li>
+        <li>Hold and drag notes also score along their length — stay on the path.</li>
+        <li>Health at zero ends the song unless Practice mode is on. Grades: S ≥ 95%, A ≥ 90%, B ≥ 80%, C ≥ 70%, otherwise D.</li>
+        <li>Same song, difficulty and seed = the same chart. Change the seed for a fresh one.</li>
+        <li>The game pauses if you switch tabs. If notes feel early or late, adjust Timing offset in Settings.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- CREDITS -->
+  <section class="screen" id="s-credits" aria-label="Credits">
+    <header class="bar"><button class="btn mini" data-go="menu">Back</button><h2>Credits</h2></header>
+    <div class="panel how">
+      <p>ZIGZAG — a file-based rhythm game made with plain HTML, CSS and JavaScript.</p>
+      <p>All visuals are drawn with Canvas, CSS and SVG, and all sound effects are synthesized in the browser. No outside assets or libraries are used.</p>
+      <p>Songs are the ones you add to the <code>songs</code> folder. Demo tracks included here are generated tones made for this project.</p>
+    </div>
+  </section>
+
+  <!-- GAME -->
+  <section class="screen" id="s-game" aria-label="Game">
+    <canvas id="game"></canvas>
+    <button class="btn mini pause-btn" id="btn-pause" aria-label="Pause">Pause</button>
+  </section>
+</main>
+
+<!-- OVERLAYS -->
+<div class="overlay" id="ov-loading" role="status"><div class="card"><h2>Loading…</h2><p>Reading the song and building your chart.</p></div></div>
+<div class="overlay" id="ov-error" role="alert"><div class="card"><h2>Can’t play this song</h2><p id="err-msg"></p>
+  <div class="row"><button class="btn" id="err-back">Back to Song Select</button></div></div></div>
+<div class="overlay" id="ov-pause" role="dialog" aria-label="Paused"><div class="card"><h2>Paused</h2><p id="pause-msg">Tap, hold, drag. Keys: D F J K.</p>
+  <div class="stack"><button class="btn big" id="p-resume">Resume</button><button class="btn" id="p-restart">Restart</button>
+  <button class="btn" id="p-songs">Song Select</button><button class="btn" id="p-menu">Main Menu</button></div></div></div>
+<div class="overlay" id="ov-results" role="dialog" aria-label="Results"><div class="card results">
+  <p class="note" id="r-title"></p><h2 id="r-song"></h2><p class="meta" id="r-meta"></p>
+  <div class="grade" id="r-grade">S</div>
+  <dl class="facts">
+    <div><dt>Score</dt><dd id="r-score"></dd></div><div><dt>Accuracy</dt><dd id="r-acc"></dd></div>
+    <div><dt>Max combo</dt><dd id="r-combo"></dd></div><div><dt>Misses</dt><dd id="r-miss"></dd></div>
+    <div><dt>Perfect / Great / Good</dt><dd id="r-pgg"></dd></div><div><dt>Seed</dt><dd id="r-seed"></dd></div>
+  </dl>
+  <p class="note" id="r-best"></p>
+  <div class="row wrap"><button class="btn big" id="r-restart">Restart</button><button class="btn" id="r-songs">Song Select</button><button class="btn" id="r-menu">Main Menu</button></div>
+</div></div>
+
+<noscript>ZIGZAG needs JavaScript enabled.</noscript>
+<script src="songs/songs.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/themes.js"></script>
+<script src="js/songs.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/chart-generator.js"></script>
+<script src="js/input.js"></script>
+<script src="js/gameplay.js"></script>
+<script src="js/menu.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
