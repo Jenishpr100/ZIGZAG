@@ -29,6 +29,48 @@ let songMeta = { title: '', artist: '' };
 let playResult = null;                  // last-run summary for the results screen
 let audioArmed = false, audioStarted = false, audioFailed = false;
 
+// ---- battle mode (see js/battle.js) ----------------------------------------
+// Entered only via window.ZZ.startBattle(enemyId, def) (called by overworld.js
+// at an arena gate). While battleMode is true the play state alternates
+// between frozen command-menu phases (Battle drives itself) and rhythm
+// "sections" that slice the song into segments.
+//
+// SECTION TIMING: one section = 8 bars = 32 beats of the chart's bpm,
+// clamped to [12, 30] s. A section past the chart's end runs at most 8 s
+// (a silent drum-break) so the fight can always conclude.
+//
+// SPEC CHART (MVP): SPECATTACK plays the next section's notes as a detached
+// bonus burst — lanes mirrored (top<->bottom) with an off-beat double tap on
+// the opposite lane inserted after each tap — on a synthetic clock while the
+// audio stays paused. Judgments feed the normal score/combo; the burst's
+// accuracy is handed to Battle.resolveSpec(). The real section is untouched.
+//
+// LOSS: onBattleEnd(lost) -> results screen with the run's rhythm stats
+// (hudResults shows STAGE MISS); the player's HP is restored for the next
+// fight. WIN: ZZ.onEnemyDefeated(enemyId) unlocks the gate, then results.
+let battleMode = false;
+let battleEnemyId = null, battleEnemyConfig = null;
+let battlePlayer = null;                    // persistent across fights this session
+let battleSectionLen = 20, battleSectionIndex = 0;
+let battleSectionStart = 0, battleSectionEnd = 0;
+let battleSpecActive = false, battleSpecEnd = 0;
+let battleSpecCounts = null;                // counts[] snapshot before a spec burst
+let battleNormalNotes = null;               // the untouched chart notes during spec
+
+// the three ZAG gate wardens (overworld.js passes {enemy, label, enemyName...})
+const WARDENS = {
+    warden_north: { name: 'NORTH WARDEN', hp: 130, sprite: '',
+        attacks: [{ name: 'FROST RING', power: 10 }, { name: 'POLAR SLAM', power: 14 }],
+        drops: ['ICE SIGIL'] },
+    warden_west:  { name: 'WEST WARDEN',  hp: 120, sprite: '',
+        attacks: [{ name: 'GUST KICK', power: 9 }, { name: 'TEMPEST', power: 13 },
+                  { name: 'TAILWIND', power: 7 }],
+        drops: ['STORM CORE'] },
+    warden_east:  { name: 'EAST WARDEN',  hp: 150, sprite: '',
+        attacks: [{ name: 'EMBER CLAW', power: 12 }, { name: 'SOLAR FLARE', power: 16 }],
+        drops: ['SUN SHARD'] },
+};
+
 // tunables for the stage (kept here so data.js stays untouched)
 const PLAY = {
     fallTime: 1.6,          // seconds a note takes from spawn to the hit line
@@ -78,6 +120,16 @@ function transitionTo(next)
     if (state == 'play' && next != 'play' && typeof ZZ != 'undefined' && ZZ.Audio)
         ZZ.Audio.stop();
 
+    // leaving play by any path other than a live battle tears the fight down
+    // (the onBattleEnd path already cleared battleMode before queuing results)
+    if (next != 'play' && battleMode)
+    {
+        battleMode = false;
+        battleSpecActive = false;
+        battleNormalNotes = null;
+        if (typeof Battle != 'undefined' && Battle.isActive()) Battle.stop();
+    }
+
     engineObjectsDestroy();
     state = next;
     player = null;
@@ -96,6 +148,11 @@ function transitionTo(next)
     }
     else if (next == 'play')
     {
+        // entering play any way other than ZZ.startBattle must not inherit a
+        // stale battle from a previous run (ZZ.startBattle arms battleMode
+        // before queueing this transition)
+        if (!battleMode && typeof Battle != 'undefined' && Battle.isActive())
+            Battle.stop();
         startSong();
         camDive = { t:0, dur:.45, fromPos: cameraPos.copy(), fromScale: cameraScale,
             toPos: vec2(), toScale: DATA.playCamScale };
@@ -231,7 +288,14 @@ function gameRenderPost()
 {
     if      (state == 'title')   hudTitle();
     else if (state == 'world')   hudWorld();
-    else if (state == 'play')    hudPlay();
+    else if (state == 'play')
+    {
+        hudPlay();
+        // battle UI lands on top of the HUD while a fight is running
+        // (during SECTION_PLAY Battle only draws its slim enemy-HP chip)
+        if (battleMode && typeof Battle != 'undefined' && Battle.isActive())
+            Battle.render();
+    }
     else if (state == 'results') hudResults();
 }
 
@@ -318,6 +382,10 @@ function startSong()
 
     songStart = time + PLAY.countdown;
     songTime = -PLAY.countdown;
+
+    // battle runs arm the fight here — the menu appears immediately over the
+    // countdown and the song clock only starts on the first SECTION_PLAY
+    if (battleMode) battleBeginRun();
 }
 
 // pick a song from ZZ.Songs, generate a friend chart and map it into the v0
@@ -405,6 +473,9 @@ function makeDemoChart(bpm, offset)
 // per-frame play logic: lane swap, song clock, input, note bookkeeping
 function playUpdate()
 {
+    // the battle lane owns the whole play update while a fight is running
+    if (battleMode) { battlePlayUpdate(); return; }
+
     // ---- lane swap (DOWN) --------------------------------------------------
     if (keyWasPressed('ArrowDown'))
     {
@@ -549,10 +620,19 @@ function judgeUnit(q, note, silent)
 function endSong()
 {
     if (state != 'play') return;
+
+    // a battle run never ends on its own: an exhausted / ended song just
+    // closes the current rhythm section early — the fight decides the exit
+    if (battleMode)
+    {
+        if (typeof Battle != 'undefined' && Battle.getState() == 'SECTION_PLAY')
+            battleSectionEnds();
+        return;
+    }
+
     if (typeof ZZ != 'undefined' && ZZ.Audio) ZZ.Audio.stop();
 
-    const judged = counts[0] + counts[1] + counts[2] + counts[3];
-    const acc = judged ? (counts[0] + counts[1]*.75 + counts[2]*.4) / judged : 0;
+    const acc = runAccuracy();
     playResult = {
         title: songMeta.title, artist: songMeta.artist,
         score, maxCombo, counts: counts.slice(), accuracy: acc,
@@ -560,6 +640,295 @@ function endSong()
     };
 
     if (score > best)
+    {
+        best = score;
+        writeSaveData(SAVE_KEY, { best, lastRun: playResult });
+    }
+    setState('results');
+}
+
+// weighted accuracy of the run so far, 0..1 (perfect=1, great=.75, good=.4)
+function runAccuracy()
+{
+    const judged = counts[0] + counts[1] + counts[2] + counts[3];
+    return judged ? (counts[0] + counts[1]*.75 + counts[2]*.4) / judged : 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// battle integration — window.ZZ.startBattle + the battle-mode play flow
+//
+// Full loop (see the battle-mode note at the top of this file):
+//   ZZ.startBattle -> setState('play') -> startSong -> Battle.start
+//   (menu over the countdown) -> command -> enemy turn -> SECTION_PLAY
+//   (rhythm segment, clock runs) -> section end -> openMenu -> repeat
+//   SPECATTACK -> detached spec burst -> resolveSpec -> command phases
+//   onBattleEnd: win -> ZZ.onEnemyDefeated + results; loss -> results
+///////////////////////////////////////////////////////////////////////////////
+
+// called by overworld.js at an arena gate: (enemyId, doorDef) where doorDef
+// is { tile, worlds, enemy, label, enemyName }
+if (typeof ZZ == 'undefined') window.ZZ = {};
+window.ZZ.startBattle = function (enemyId, def)
+{
+    // guard double-starts: one fight at a time, world state only
+    if (state != 'world') return false;
+    if (battleMode || (typeof Battle != 'undefined' && Battle.isActive())) return false;
+
+    const base = WARDENS[enemyId] || WARDENS.warden_north;
+    def = def || {};
+    battleEnemyId = WARDENS[enemyId] ? enemyId : 'warden_north';
+    battleEnemyConfig = {
+        name: def.enemyName || def.label || base.name,   // display info from the door
+        hp: base.hp, maxHp: base.hp,
+        attacks: base.attacks,
+        sprite: def.sprite || base.sprite || '',
+        drops: base.drops,
+    };
+
+    battleMode = true;
+    audioUnlock();
+    flash = 1; flashColor = DATA.c.ink;
+    shake = .35;
+    setState('play');
+    return true;
+};
+
+// the playerState object Battle mutates in place (hp / items / score written
+// back); persists across fights within the session, re-seeded from a shared
+// inventory if another lane provides ZZ.inventory
+function battlePlayerState()
+{
+    if (battlePlayer) return battlePlayer;
+    const inv = typeof ZZ != 'undefined' && ZZ.inventory || null;
+    battlePlayer = {
+        hp: 100, maxHp: 100,
+        weapons: (inv && inv.weapons) || [{ name: 'ZIGZAG FISTS', power: 6 }],
+        weaponIndex: 0,
+        items: (inv && inv.items) ? inv.items.slice() : ['POTION'],
+        def: 0,
+    };
+    return battlePlayer;
+}
+
+// called from startSong(): size the sections and open the fight
+function battleBeginRun()
+{
+    if (typeof Battle == 'undefined') { battleMode = false; return; }
+    const p = battlePlayerState();
+    const bpm = chart.bpm || DATA.bpm;
+    battleSectionLen = clamp(32 * 60 / bpm, 12, 30);   // 8 bars = 32 beats
+    battleSectionIndex = 0;
+    battleSectionStart = 0;
+    battleSectionEnd = battleSectionLen;
+    battleSpecActive = false;
+    battleNormalNotes = null;
+
+    Battle.start(battleEnemyConfig, p, battleOnEnd, {
+        onSectionStart: battleOnSectionStart,
+        performance: { score, accuracy: runAccuracy(), combo },
+    });
+}
+
+// per-frame driver — replaces playUpdate entirely while battleMode is true
+function battlePlayUpdate()
+{
+    if (typeof Battle == 'undefined' || !Battle.isActive())
+    {
+        // the fight vanished under us (hot-reload / hard stop) — wrap up
+        battleMode = false;
+        endSong();
+        return;
+    }
+
+    // live rhythm performance feeds the battle's score/DEF bonuses
+    // (def items buff B.def inside battle.js; we don't stomp it here)
+    Battle.setPerformance({ score, accuracy: runAccuracy(), combo });
+    Battle.update(timeDelta);
+
+    // spec burst: the harder detached chart is the only thing ticking
+    if (Battle.isSpecChart()) { battleSpecUpdate(); return; }
+
+    // normal rhythm section: run the song clock + note input/bookkeeping
+    if (Battle.getState() == 'SECTION_PLAY')
+    {
+        battleClock(timeDelta);
+
+        // lane swap (DOWN)
+        if (keyWasPressed('ArrowDown'))
+        {
+            activeLane = activeLane == 'bottom' ? 'top' : 'bottom';
+            laneSwapPulse = 1;
+            if (typeof ZZ != 'undefined' && ZZ.Audio) ZZ.Audio.sfx('tick');
+        }
+        laneSwapPulse = Math.max(0, laneSwapPulse - timeDelta*3);
+
+        // taps / hold starts / flicks
+        if (keyWasPressed('ArrowLeft') || keyWasPressed('ArrowRight')) tryStartHit();
+        if (keyWasPressed('ArrowUp')) tryFlick();
+
+        for (const k in laneFlash) laneFlash[k] = Math.max(0, laneFlash[k] - timeDelta*4);
+        for (const n of notes) n.tick();
+
+        if (songTime >= battleSectionEnd) battleSectionEnds();
+        return;
+    }
+
+    // MENU_SELECT / ITEM_SELECT / EXECUTE_COMMAND / ENEMY_TURN / SECTION_BREAK /
+    // BATTLE_WON / BATTLE_LOST: song clock and notes stay frozen, the field
+    // remains visible behind Battle's own overlay
+}
+
+// battle-mode song clock: audio-driven when playing, accumulated while the
+// audio is paused (menus) or absent (silent run)
+function battleClock(dt)
+{
+    if (audioStarted && !audioFailed && typeof ZZ != 'undefined' && ZZ.Audio)
+        songTime = ZZ.Audio.now();
+    else
+    {
+        songTime += dt;
+        if (songTime >= 0 && audioArmed && !audioFailed && typeof ZZ != 'undefined' && ZZ.Audio)
+        {
+            audioStarted = true;
+            const p = ZZ.Audio.play();
+            if (p && p.catch)
+                p.catch(()=> { audioFailed = true; audioStarted = false; });
+        }
+    }
+}
+
+// a rhythm section ran out (its time is up, or the song/audio ended):
+// pause the audio and hand control back to the battle menu
+function battleSectionEnds()
+{
+    if (audioStarted && !audioFailed && typeof ZZ != 'undefined' && ZZ.Audio)
+        ZZ.Audio.pause();
+    battleSectionIndex++;
+    battleSectionStart = battleSectionEnd;
+    // sections past the chart's end are short silent drum-breaks (<= 8 s)
+    const len = battleSectionStart >= chart.length - .1
+        ? Math.min(battleSectionLen, 8) : battleSectionLen;
+    battleSectionEnd = battleSectionStart + len;
+    Battle.openMenu();
+}
+
+// Battle's onSectionStart — drives our clock / chart per the battle phase
+function battleOnSectionStart(info)
+{
+    if (info && info.spec) { battleStartSpec(); return; }
+
+    // (re)start the next normal rhythm section at the frozen song position
+    battleSpecActive = false;
+    if (audioStarted && !audioFailed && typeof ZZ != 'undefined' && ZZ.Audio)
+    {
+        // resume the paused track exactly where the section was cut
+        ZZ.Audio.seek(Math.max(0, battleSectionStart));
+        const pr = ZZ.Audio.play();
+        if (pr && pr.catch) pr.catch(()=> { audioFailed = true; });
+    }
+    else
+        songTime = battleSectionStart;      // silent run: snap the clock
+}
+
+// SPECATTACK: play the next section's notes as a harder detached burst —
+// mirrored lanes + an off-beat double tap after every tap — on a synthetic
+// clock while the audio stays paused. The real section is left untouched.
+function battleStartSpec()
+{
+    const t0 = battleSectionStart, t1 = t0 + battleSectionLen;
+    const beat = 60 / (chart.bpm || DATA.bpm);
+    const spec = [];
+    for (const n of chart.notes)
+    {
+        if (n.t < t0 - 1e-4 || n.t >= t1) continue;
+        const lane = n.lane == 'top' ? 'bottom' : n.lane == 'bottom' ? 'top' : 'center';
+        spec.push({ t: r3(n.t), lane, type: n.type, dur: n.dur, flicks: n.flicks });
+        if (n.type == 'tap')       // off-beat double on the opposite lane
+            spec.push({ t: r3(n.t + beat*.5),
+                lane: n.lane == 'center' ? 'center' : lane, type: 'tap' });
+    }
+    spec.sort((a, b)=> a.t - b.t);
+
+    battleNormalNotes = notes;               // stash the untouched chart notes
+    battleSpecCounts = counts.slice();
+    notes = spec.map(n=> { const p = new PlayNote(n); p.isSpec = true; return p; });
+    battleSpecActive = true;
+    battleSpecEnd = spec.length
+        ? spec.reduce((m, n)=> Math.max(m, n.t + (n.dur || 0)), 0) + PLAY.hitWindow + .25
+        : t0 + PLAY.hitWindow + .25;
+    songTime = t0 - 1.2;                     // synthetic lead-in on the game clock
+}
+
+// per-frame spec burst: detached silent clock, same input model as play
+function battleSpecUpdate()
+{
+    songTime += timeDelta;
+    laneSwapPulse = Math.max(0, laneSwapPulse - timeDelta*3);
+    for (const k in laneFlash) laneFlash[k] = Math.max(0, laneFlash[k] - timeDelta*4);
+
+    if (keyWasPressed('ArrowDown'))
+    {
+        activeLane = activeLane == 'bottom' ? 'top' : 'bottom';
+        laneSwapPulse = 1;
+    }
+    if (keyWasPressed('ArrowLeft') || keyWasPressed('ArrowRight')) tryStartHit();
+    if (keyWasPressed('ArrowUp')) tryFlick();
+    for (const n of notes) n.tick();
+
+    if (songTime >= battleSpecEnd && Battle.isSpecChart())
+    {
+        // every spec note has resolved — hand the burst's accuracy over
+        const d = [0, 0, 0, 0];
+        for (let i = 0; i < 4; ++i) d[i] = counts[i] - battleSpecCounts[i];
+        const judged = d[0] + d[1] + d[2] + d[3];
+        const acc = judged ? (d[0] + d[1]*.75 + d[2]*.4) / judged : 0;
+
+        for (const n of notes) n.destroy();
+        notes = battleNormalNotes || [];
+        battleNormalNotes = null;
+        battleSpecActive = false;
+        songTime = battleSectionStart;       // back to the real song position
+        Battle.resolveSpec(acc);             // >=70% => x3 damage (battle.js)
+    }
+}
+
+// Battle's onBattleEnd — fired once, from the win/lose banner
+function battleOnEnd(result)
+{
+    const won = !!(result && result.won);
+    if (battlePlayer)
+    {
+        battlePlayer.hp = Math.max(1, result && result.playerHp || battlePlayer.hp);
+        if (won && result && result.newItems && result.newItems.length)
+            battlePlayer.items = battlePlayer.items.concat(result.newItems);
+        if (!won) battlePlayer.hp = battlePlayer.maxHp;    // respawn for the next fight
+    }
+    if (typeof ZZ != 'undefined' && ZZ.Audio) ZZ.Audio.stop();
+
+    const id = battleEnemyId;
+    battleEnemyId = null; battleEnemyConfig = null;
+    battleMode = false;
+    battleSpecActive = false;
+    battleNormalNotes = null;
+
+    if (won && typeof ZZ != 'undefined' && typeof ZZ.onEnemyDefeated == 'function')
+        ZZ.onEnemyDefeated(id);             // unlocks the gate (overworld.js)
+
+    finishBattleRun(won);
+}
+
+// win or lose, the run's rhythm stats land on the results screen
+function finishBattleRun(won)
+{
+    const acc = runAccuracy();
+    playResult = {
+        title: songMeta.title, artist: songMeta.artist,
+        score, maxCombo, counts: counts.slice(), accuracy: acc,
+        grade: !won ? 'F'
+            : acc >= .95 ? 'S' : acc >= .9 ? 'A' : acc >= .8 ? 'B' : acc >= .7 ? 'C' : 'D',
+        battle: true, won,
+    };
+    if (won && score > best)
     {
         best = score;
         writeSaveData(SAVE_KEY, { best, lastRun: playResult });
@@ -582,6 +951,7 @@ class PlayNote extends EngineObject
         this.dur = n.dur || 0;
         this.flicks = (n.flicks || []).map(t=> ({ t, done: false }));
         this.state = 'pending';             // pending -> holding -> done | broken | missed
+        this.isSpec = !!n.spec;             // spec-burst note (battle mode)
         this.hitFlash = 0;                  // white pop after a hit
         this.missFlash = 0;                 // red pop after a miss
         this.flickFlash = 0;                // extra glow when a flick connects
@@ -648,6 +1018,9 @@ class PlayNote extends EngineObject
     render()
     {
         if (state != 'play') return;
+        // during a spec burst only the spec notes draw; during normal battle
+        // sections the (destroyed) spec notes are gone and these stay visible
+        if (battleSpecActive && !this.isSpec) return;
         const gone = this.state == 'done' || this.state == 'broken' || this.state == 'missed';
         if (gone && this.hitFlash <= .01 && this.missFlash <= .01) return;
         if (this.state == 'pending' && this.t + this.dur - songTime > PLAY.fallTime + .1) return;
