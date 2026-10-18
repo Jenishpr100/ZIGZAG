@@ -137,6 +137,7 @@ const DATA = {
         npcRange: 1.6,         // world units to talk to an NPC
         doorRange: 1.35,       // world units that trips a door
         doorCooldown: 2.6,     // seconds before a locked door re-triggers
+        doorFade: 0.35,        // seconds for each half of a door-warp fade (A3)
     },
 
     // ---- overworld ----------------------------------------------------------

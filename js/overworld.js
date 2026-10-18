@@ -1,20 +1,31 @@
 ///////////////////////////////////////////////////////////////////////////////
-// ZIGZAG SYNTH — overworld.js
-// The dual hub: ZIG (the real town) and ZAG (the neon play world) share one
-// tile map, but not a palette, not a cast and not the same doors.
+// MuZiC "Switch" — overworld.js
+// A Pokémon-style multi-room overworld (amendment A3). Rooms are separate
+// maps held in a registry that follows the shared `muzic-switch-world` v0
+// schema (amendment A2) — the same shape WorldFormat.getWorld() returns, so
+// the built-in default world and an authored GAME.BIN are interchangeable.
 //
 // Contract with the state machine (js/littlejs-game.js):
 //   owUpdate(dt)     world logic — call once per frame while state == 'world'
 //                    (safe to call at any time; it self-guards)
-//   owRender()       extra overlay drawing — safe in any render pass, the
-//                    dialog also draws itself through an engine object layer
+//   owRender()       extra overlay drawing — safe in any render pass; the
+//                    dialog draws itself through an engine object layer and
+//                    the door-warp fade draws here
 //   owHandleKey(k,d) optional key feed if the state machine forwards raw keys
-//   owSetWorld(w)    switch to 'zig' or 'zag' with the transition animation
+//   owSetWorld(w)    switch palette to 'zig' or 'zag' (never changes rooms —
+//                    a Down-switch keeps the player where they stand)
 //   owGetWorld()     current world name
+//   owGetRoom()      current room id       owGetRoomDef()  its normalized def
+//   owGetRoomName()  current room display name
+//   owListRooms()    every room id in the registry
+//   owLoadWorld(w)   force-install a muzic-switch-world object (dev/test)
 //
 // Battle contract: when a battle ends in victory the battle lane calls
 //   ZZ.onEnemyDefeated(enemyId)
-// and may read / write ZZ.defeatedEnemies[enemyId] directly.
+// and may read / write ZZ.defeatedEnemies[enemyId] directly. When an open
+// ZAG gate / level-door is activated and its warden is already beaten we call
+//   ZZ.startBattle(enemyId, def)      (def = the door's definition object)
+// if the battle lane exposes it; otherwise a flavor dialog stands in.
 ///////////////////////////////////////////////////////////////////////////////
 
 const TILE_FLOOR = 0, TILE_PATH = 1, TILE_WALL = 2, TILE_BLOCK = 3;
@@ -23,11 +34,9 @@ const TILE_FLOOR = 0, TILE_PATH = 1, TILE_WALL = 2, TILE_BLOCK = 3;
 const OW_GUARD_CORE = col('#1a0b3a');
 const OW_STANDIN_SKIN = col('#f4c9a3');
 const OW_STANDIN_HUES = ['#ffd76a', '#2ff3ff', '#ff2e88', '#7cff9b', '#c86bff'].map(col);
-const NPC_WORLDS = ['zig'];
 
 let worldTiles, WORLD_W = 0, WORLD_H = 0;
-let worldBuilt = false;
-let portalPos = vec2(), worldSpawn = vec2();
+let portalPos = vec2(), owPortalActive = false;
 let player = null;
 const worldDecor = [];
 
@@ -37,45 +46,10 @@ let owPal = null;                       // active palette of engine Colors
 let owSwitchT = 1;                      // 0..1 transition progress (1 = settled)
 let owSwitchFrom = null, owSwitchTo = null, owSwitchFromName = null;
 
-// live object lists (rebuilt every time the hub is created)
+// live object lists (rebuilt every time a room is entered)
 const owNpcs = [], owDoors = [], owEnemies = [], owAmbient = [], owBackdrops = [];
+const owStatics = [];                   // floor / decor / portal — destroyed on room change
 let owNear = null;                      // {kind:'npc'|'door', obj} the player can talk to
-
-// ---- cast: NPCs live in ZIG, arena doors guard ZAG --------------------------
-const WORLD_NPCS = [
-    { tile: [10,  8], sheet: 'npc1', cell: 8, name: 'ZIGGY', lines: [
-        'Welcome to Zig Zag Town! Press DOWN to switch worlds.',
-        'One step down and the whole world flips. Try it!' ] },
-    { tile: [21, 12], sheet: 'npc2', cell: 8, name: 'MIRA', lines: [
-        'The ZAG world is dangerous... but that\'s where the levels are.',
-        'Gear up first. The neon side does not forgive.' ] },
-    { tile: [30,  6], sheet: 'npc3', cell: 8, name: 'REX', lines: [
-        'I heard there\'s a powerful enemy guarding the north door.',
-        'Clear it, and the north gate will answer to you.' ] },
-    { tile: [15, 20], sheet: 'npc4', cell: 8, name: 'PIP', lines: [
-        'Press E to check your inventory. You\'ll need weapons!',
-        'A bare-handed rhythm hero is a short-lived rhythm hero.' ] },
-    { tile: [25, 18], sheet: 'npc5', cell: 8, name: 'ECHO', lines: [
-        'The rhythm of this world... can you hear it?',
-        'Every step you take lands on the beat. Keep walking.' ] },
-];
-
-const WORLD_DOORS = [
-    // ZAG — arena gates, each held shut by an enemy until ZZ.onEnemyDefeated
-    { tile: [33, 27], worlds: ['zag'], enemy: 'warden_north',
-      label: 'NORTH GATE', enemyName: 'NORTH WARDEN' },
-    { tile: [9,  25], worlds: ['zag'], enemy: 'warden_west',
-      label: 'WEST GATE', enemyName: 'WEST WARDEN' },
-    { tile: [36, 11], worlds: ['zag'], enemy: 'warden_east',
-      label: 'EAST GATE', enemyName: 'EAST WARDEN' },
-    // ZIG — quiet doors that only exist in the real town
-    { tile: [16, 10], worlds: ['zig'], open: true, label: 'HOUSE', flavor: [
-        'A note on the door: "Out practicing. Back at dusk."',
-        'Faint piano drifts from somewhere inside.' ] },
-    { tile: [4,  16], worlds: ['zig'], open: true, label: 'SHOP', flavor: [
-        'Mira\'s shop — shuttered for the festival.',
-        'Word is the ZAG arenas pay well. Try your luck there.' ] },
-];
 
 // ---- shared battle-state object --------------------------------------------
 // created defensively so whichever lane loads first wins
@@ -143,6 +117,8 @@ function owDrawCell(key, index, pos, size, color, mirror)
 ///////////////////////////////////////////////////////////////////////////////
 // palettes — owPal is always a full palette of Colors, either a direct
 // reference to DATA.pal.zig/zag, or a per-frame lerp while switching.
+// The ZIG <-> ZAG switch only swaps palette/layer visibility — room geometry
+// is shared, so the player never moves when worlds flip (A3).
 ///////////////////////////////////////////////////////////////////////////////
 
 function owGetWorld()      { return currentWorld; }
@@ -259,42 +235,213 @@ function owArrowDownPhysical()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// map generation
+// world data — `muzic-switch-world` v0 registry (A2)
+//
+//   { format:'muzic-switch-world', version:0,
+//     rooms: { id: { name, world:'zig'|'zag'|'both', size:[w,h],
+//                    terrain:[row strings], spawn:[x,y], portal:[x,y],
+//                    decor:[{kind,x,y}],
+//                    doors:[{id,x,y,dir,to,tx,ty,lockedBy,worlds,...}],
+//                    npcs:[{id,sprite,x,y,dir,dialog,worlds}],
+//                    enemies:[{id,x,y,name,hp}],
+//                    triggers:[{x,y,w,h,dialog}] } },
+//     dialogs: { id: { name, pages:[...] } } }
+//
+// terrain chars: '#' wall  'X'/'B' block  '=' path  '.'/' ' floor
 ///////////////////////////////////////////////////////////////////////////////
 
-function buildWorld()
-{
-    const W = DATA.world.w, H = DATA.world.h;
-    WORLD_W = W; WORLD_H = H;
-    const t = worldTiles = new Uint8Array(W*H);
-    worldDecor.length = 0;
+let owWorldData = null;                 // the installed world object
+let owWorldSource = 'default';          // 'default' | 'WorldFormat' | 'load'
+let owRoomId = null;                    // current room id in the registry
+const owRooms = {};                     // id -> normalized room def
+const owTrigFlags = {};                 // per-trigger inside latch
 
-    const fill = (x0, y0, x1, y1, v)=>
+function owGetRoom()      { return owRoomId; }
+function owListRooms()    { return Object.keys(owRooms); }
+function owGetRoomDef()   { return owRoomId ? owRooms[owRoomId] || null : null; }
+function owGetRoomName()  { const r = owGetRoomDef(); return r ? r.name : ''; }
+function owGetWorldData() { return owWorldData; }
+function owGetWorldSource(){ return owWorldSource; }
+
+/** is this object graph a usable muzic-switch-world bundle? */
+function owValidateWorld(w)
+{
+    if (!w || typeof w != 'object') return false;
+    if (w.format !== undefined && w.format != 'muzic-switch-world') return false;
+    if (!w.rooms || typeof w.rooms != 'object') return false;
+    let count = 0;
+    for (const id in w.rooms)
+    {
+        const r = w.rooms[id];
+        if (!r || typeof r != 'object') return false;
+        if (!Array.isArray(r.size) || r.size.length < 2 ||
+            !(r.size[0] >= 4) || !(r.size[1] >= 4)) return false;
+        ++count;
+    }
+    return count > 0;
+}
+
+/** 'NPC_1' / 'npc1' -> 'npc1'; anything else passes through lowercased */
+function owSheetFor(sprite)
+{
+    const s = String(sprite == undefined ? 'npc1' : sprite);
+    if (/^teto$/i.test(s)) return 'teto';
+    const m = s.match(/(\d+)\s*$/);
+    if (/^npc/i.test(s)) return 'npc' + (m ? m[1] : '1');
+    return s.toLowerCase();
+}
+
+/** per-object world membership: explicit `worlds` wins, else the room's tag */
+function owWorldsOf(objWorlds, roomWorld)
+{
+    if (Array.isArray(objWorlds) && objWorlds.length) return objWorlds.slice();
+    return roomWorld == 'both' ? ['zig', 'zag'] : [roomWorld];
+}
+
+/** normalize one room def against the world's dialog table */
+function owNormalizeRoom(id, r, dialogs)
+{
+    const size = [Math.max(6, (r.size && r.size[0] | 0) || 24),
+                  Math.max(6, (r.size && r.size[1] | 0) || 18)];
+    const world = r.world == 'zig' || r.world == 'zag' ? r.world : 'both';
+    const room = {
+        id, name: r.name || id, world, size,
+        terrain:  Array.isArray(r.terrain) && r.terrain.length ? r.terrain.slice() : null,
+        spawn:    Array.isArray(r.spawn)   ? [+r.spawn[0] || 0, +r.spawn[1] || 0] : null,
+        portal:   Array.isArray(r.portal)  ? [+r.portal[0], +r.portal[1]] : null,
+        camScale: +r.camScale || 0,
+        decor:    (r.decor || []).map(d => ({ kind: d.kind, x: +d.x || 0, y: +d.y || 0 })),
+        doors:    (r.doors    || []).map(d => {
+            const o = Object.assign({}, d);
+            o.x = +o.x || 0; o.y = +o.y || 0;
+            o.worlds = owWorldsOf(o.worlds, world);
+            if (!o.lockedBy && o.enemy) o.lockedBy = o.enemy;   // A2 alias
+            return o;
+        }),
+        npcs:     (r.npcs     || []).map(n => {
+            const o = Object.assign({}, n);
+            o.x = +o.x || 0; o.y = +o.y || 0;
+            o.sheet = owSheetFor(o.sprite || o.sheet);
+            o.cell  = o.cell === undefined ? 8 : o.cell;
+            o.worlds = owWorldsOf(o.worlds, world);
+            const dlg = o.dialog && dialogs && dialogs[o.dialog];
+            o.name = (dlg && dlg.name) || o.name || o.id || 'TOWNSFOLK';
+            return o;
+        }),
+        enemies:  (r.enemies  || []).map(e => {
+            const o = Object.assign({}, e);
+            o.x = +o.x || 0; o.y = +o.y || 0;
+            o.worlds = owWorldsOf(o.worlds, world);
+            return o;
+        }),
+        triggers: (r.triggers || []).map(t => {
+            const o = Object.assign({}, t);
+            o.x = +o.x || 0; o.y = +o.y || 0;
+            o.w = Math.max(1, +o.w || 1); o.h = Math.max(1, +o.h || 1);
+            o.worlds = owWorldsOf(o.worlds, world);
+            return o;
+        }),
+    };
+    if (!room.spawn) room.spawn = [size[0] >> 1, size[1] >> 1];
+    return room;
+}
+
+/** install a whole world object into the registry (replaces every room) */
+function owInstallRooms(w)
+{
+    for (const id in owRooms) delete owRooms[id];
+    const dialogs = w.dialogs || {};
+    for (const id in w.rooms)
+        owRooms[id] = owNormalizeRoom(id, w.rooms[id], dialogs);
+    return owListRooms();
+}
+
+/** a dialog table entry as {name, pages}; null when unknown */
+function owDialogById(id)
+{
+    const d = owWorldData && owWorldData.dialogs && owWorldData.dialogs[id];
+    if (!d) return null;
+    const pages = Array.isArray(d.pages) ? d.pages.filter(p => typeof p == 'string' && p.length)
+                 : typeof d.pages == 'string' ? [d.pages] : [];
+    return { name: d.name || '…', pages: pages.length ? pages : ['…'] };
+}
+
+/**
+ * Boot the world: prefer WorldFormat.getWorld() (the GAME.BIN / editor
+ * pipeline, amendment A2), fall back to the built-in default world. Both
+ * sources share the same schema, so nothing downstream changes.
+ */
+function owBootWorld()
+{
+    let src = null, source = 'default';
+    try
+    {
+        const WF = (typeof window != 'undefined' && window.WorldFormat)
+                || (typeof WorldFormat != 'undefined' ? WorldFormat : null);
+        if (WF && typeof WF.getWorld == 'function')
+        {
+            const w = WF.getWorld();
+            if (owValidateWorld(w)) { src = w; source = 'WorldFormat'; }
+        }
+    }
+    catch (e) { src = null; }
+
+    if (!src) { src = owBuildDefaultWorld(); source = 'default'; }
+
+    if (src !== owWorldData)
+    {
+        owWorldData = src;
+        owWorldSource = source;
+        owInstallRooms(src);
+        if (!owRooms[owRoomId]) owRoomId = owListRooms()[0];
+    }
+    else if (!owRooms[owRoomId])
+        owRoomId = owListRooms()[0];
+    return owWorldSource;
+}
+
+/** force-install a world object (dev tools / tests); re-boots the room */
+function owLoadWorld(w)
+{
+    if (!owValidateWorld(w)) return false;
+    owWorldData = w;
+    owWorldSource = 'load';
+    owInstallRooms(w);
+    if (!owRooms[owRoomId]) owRoomId = owListRooms()[0];
+    if (typeof state != 'undefined' && state == 'world') owEnterRoom(owRoomId, null, null);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// the built-in default world — same schema WorldFormat returns
+// ---------------------------------------------------------------------------
+
+const OW_TOWN_W = 40, OW_TOWN_H = 30;
+
+/** the original hub layout, expressed as terrain rows */
+function owTerrainTown()
+{
+    const W = OW_TOWN_W, H = OW_TOWN_H, g = [];
+    for (let y = 0; y < H; ++y) g.push(new Array(W).fill('.'));
+    const fill = (x0, y0, x1, y1, ch)=>
     {
         for (let y = y0; y <= y1; ++y)
         for (let x = x0; x <= x1; ++x)
-            if (x >= 0 && y >= 0 && x < W && y < H)
-                t[y*W + x] = v;
+            if (g[y] && x >= 0 && x < W) g[y][x] = ch;
     };
-
-    // base floor, then a solid ring of wall around the whole hub
-    fill(0, 0, W-1, H-1, TILE_FLOOR);
-    fill(0, 0, W-1, 0,     TILE_WALL);
-    fill(0, H-1, W-1, H-1, TILE_WALL);
-    fill(0, 0, 0, H-1,     TILE_WALL);
-    fill(W-1, 0, W-1, H-1, TILE_WALL);
-
-    // -- the zigzag road: a plaza, then three switchbacks climbing north ------
-    fill(7, 3, 15, 9,  TILE_PATH);   // portal plaza
-    fill(7, 9, 8, 15,  TILE_PATH);   // north
-    fill(7, 15, 31, 16, TILE_PATH);  // east
-    fill(30, 16, 31, 21, TILE_PATH); // north
-    fill(10, 20, 31, 21, TILE_PATH); // west
-    fill(10, 21, 11, 25, TILE_PATH); // north
-    fill(10, 24, 32, 25, TILE_PATH); // east
-    fill(30, 22, 34, 26, TILE_PATH); // viewing deck at the end of the road
-
-    // -- neon-trimmed obstacle blocks, all clear of the road -----------------
+    // border ring
+    fill(0, 0, W-1, 0, '#'); fill(0, H-1, W-1, H-1, '#');
+    fill(0, 0, 0, H-1, '#'); fill(W-1, 0, W-1, H-1, '#');
+    // the zigzag road: plaza, then three switchbacks climbing north
+    fill(7, 3, 15, 9,  '=');   // portal plaza
+    fill(7, 9, 8, 15, '=');    // north
+    fill(7, 15, 31, 16, '=');  // east
+    fill(30, 16, 31, 21, '='); // north
+    fill(10, 20, 31, 21, '='); // west
+    fill(10, 21, 11, 25, '='); // north
+    fill(10, 24, 32, 25, '='); // east
+    fill(30, 22, 34, 26, '='); // viewing deck at the end of the road
+    // neon-trimmed obstacle blocks, all clear of the road
     const blocks = [
         [18,5,20,7], [24,4,26,6], [30,7,33,9], [3,6,5,8],
         [3,12,5,14], [18,11,20,13], [25,12,27,14], [36,12,37,18],
@@ -302,18 +449,208 @@ function buildWorld()
         [3,23,5,26], [16,22,19,23], [16,27,20,28], [24,27,27,28],
         [12,1,14,2], [21,1,23,2], [34,2,36,3], [35,21,37,24],
     ];
-    for (const b of blocks)
-        fill(b[0], b[1], b[2], b[3], TILE_BLOCK);
+    for (const b of blocks) fill(b[0], b[1], b[2], b[3], 'X');
+    return g.map(r => r.join(''));
+}
 
-    // -- decoration ----------------------------------------------------------
+function owDefaultTownDecor()
+{
     const pylons = [[6,10], [9,14], [32,17], [9,22], [36,27], [16,8], [23,6], [5,20], [28,14]];
-    for (const p of pylons)
-        worldDecor.push({ kind:'pylon', pos: tileCenter(p[0], p[1]), seed: rand(0, 6.28) });
-    // a stage arch over the end of the road
-    worldDecor.push({ kind:'arch', pos: tileCenter(33, 24), seed: 0 });
+    return pylons.map(p => ({ kind:'pylon', x:p[0], y:p[1] }))
+        .concat([{ kind:'arch', x:33, y:24 }]);   // stage arch over the arena door
+}
 
-    portalPos  = tileCenter(11, 6);
-    worldSpawn = tileCenter(11, 3);   // portal-adjacent start point
+/** build a w×h terrain row array: floor with a wall ring, then fill ops */
+function owMakeTerrain(w, h, fills)
+{
+    const g = [];
+    for (let y = 0; y < h; ++y) g.push(new Array(w).fill('.'));
+    const box = (x0, y0, x1, y1, ch)=>
+    {
+        for (let y = y0; y <= y1; ++y)
+        for (let x = x0; x <= x1; ++x)
+            if (g[y] && x >= 0 && x < w) g[y][x] = ch;
+    };
+    box(0, 0, w-1, 0, '#'); box(0, h-1, w-1, h-1, '#');
+    box(0, 0, 0, h-1, '#'); box(w-1, 0, w-1, h-1, '#');
+    for (const f of fills) box(f[0], f[1], f[2], f[3], f[4]);
+    return g.map(r => r.join(''));
+}
+
+function owBuildDefaultWorld()
+{
+    return {
+        format: 'muzic-switch-world', version: 0,
+        rooms: {
+            // ---- ZIG: town + two interiors ------------------------------------
+            town: {
+                name: 'Zig Zag Town', world: 'both',
+                size: [OW_TOWN_W, OW_TOWN_H],
+                terrain: owTerrainTown(),
+                spawn: [11, 3], portal: [11, 6],
+                decor: owDefaultTownDecor(),
+                doors: [
+                    { id:'house_door', x:16, y:10, dir:'up', worlds:['zig'],
+                      to:'house', tx:7, ty:7, label:'HOUSE' },
+                    { id:'shop_door',  x:4,  y:16, dir:'up', worlds:['zig'],
+                      to:'shop',  tx:7, ty:9, label:'SHOP' },
+                    { id:'arena_door', x:34, y:23, dir:'up', worlds:['zag'],
+                      to:'arena', tx:15, ty:19, label:'ARENA' },
+                    // the three warden gates — ZAG only, held shut until beaten
+                    { id:'gate_north', x:33, y:27, worlds:['zag'],
+                      lockedBy:'warden_north', enemy:'warden_north',
+                      label:'NORTH GATE', enemyName:'NORTH WARDEN' },
+                    { id:'gate_west',  x:9,  y:25, worlds:['zag'],
+                      lockedBy:'warden_west', enemy:'warden_west',
+                      label:'WEST GATE', enemyName:'WEST WARDEN' },
+                    { id:'gate_east',  x:36, y:11, worlds:['zag'],
+                      lockedBy:'warden_east', enemy:'warden_east',
+                      label:'EAST GATE', enemyName:'EAST WARDEN' },
+                ],
+                npcs: [
+                    { id:'ziggy', sprite:'NPC_1', x:10, y:8,  dir:'down', worlds:['zig'], dialog:'welcome' },
+                    { id:'mira',  sprite:'NPC_2', x:21, y:12, dir:'down', worlds:['zig'], dialog:'mira_tip' },
+                    { id:'rex',   sprite:'NPC_3', x:30, y:6,  dir:'down', worlds:['zig'], dialog:'rex_tip' },
+                    { id:'pip',   sprite:'NPC_4', x:15, y:20, dir:'down', worlds:['zig'], dialog:'pip_inv' },
+                    { id:'echo',  sprite:'NPC_5', x:25, y:18, dir:'down', worlds:['zig'], dialog:'echo_rhythm' },
+                ],
+                triggers: [
+                    { id:'intro', x:12, y:7, w:4, h:2, dialog:'intro' },
+                ],
+            },
+            house: {
+                name: 'Practise House', world: 'zig', size: [14, 10],
+                terrain: owMakeTerrain(14, 10, [
+                    [3, 2, 3, 2, 'X'], [10, 2, 10, 2, 'X'],   // bookshelf corners
+                    [6, 6, 7, 6, 'X'],                        // piano bench
+                    [7, 8, 8, 8, '='],                        // the doorway back
+                ]),
+                spawn: [7, 7],
+                doors: [
+                    { id:'house_out', x:7, y:8, dir:'down', to:'town', tx:16, ty:11, label:'TOWN' },
+                ],
+                npcs: [
+                    { id:'pianist', sprite:'NPC_3', x:5, y:3, dir:'down', dialog:'pianist' },
+                ],
+            },
+            shop: {
+                name: "Mira's Shop", world: 'zig', size: [16, 12],
+                terrain: owMakeTerrain(16, 12, [
+                    [3, 2, 8, 2, 'X'],                        // shuttered counter
+                    [7, 5, 7, 5, 'X'],                        // a stacked crate
+                    [7, 10, 8, 10, '='],                      // the doorway back
+                ]),
+                spawn: [7, 9],
+                doors: [
+                    { id:'shop_out', x:7, y:10, dir:'down', to:'town', tx:4, ty:15, label:'TOWN' },
+                ],
+                npcs: [
+                    { id:'clerk', sprite:'NPC_2', x:11, y:3, dir:'down', dialog:'clerk' },
+                ],
+            },
+            // ---- ZAG: battle areas --------------------------------------------
+            arena: {
+                name: 'Neon Arena', world: 'zag', size: [30, 22],
+                terrain: owMakeTerrain(30, 22, [
+                    [2, 3, 5, 3, 'X'],   [24, 3, 27, 3, 'X'],  // stand blocks
+                    [15, 7, 16, 8, 'X'],                       // centre dais
+                    [2, 12, 5, 12, 'X'],  [24, 12, 27, 12, 'X'],
+                    [15, 19, 16, 20, '='],                     // doorway back to town
+                ]),
+                spawn: [15, 19],
+                doors: [
+                    { id:'arena_out', x:15, y:20, dir:'down', to:'town', tx:34, ty:24, label:'TOWN' },
+                    { id:'pit_gate',  x:27, y:10, dir:'up',   to:'pit',  tx:11, ty:15,
+                      lockedBy:'warden_east', enemy:'warden_east',
+                      label:'PIT GATE', enemyName:'EAST WARDEN' },
+                ],
+                npcs: [
+                    { id:'coach', sprite:'NPC_4', x:8, y:13, dir:'right', dialog:'coach' },
+                ],
+                enemies: [
+                    { id:'spar_bot', x:20, y:15, name:'SPAR BOT', hp:40 },
+                ],
+                triggers: [
+                    { id:'arena_banner', x:10, y:8, w:10, h:6, dialog:'arena_banner' },
+                ],
+            },
+            pit: {
+                name: 'Static Pit', world: 'zag', size: [24, 18],
+                terrain: owMakeTerrain(24, 18, [
+                    [3, 3, 6, 3, 'X'],   [13, 3, 16, 3, 'X'],  // rubble
+                    [11, 7, 12, 8, 'X'],                       // the spike
+                    [3, 12, 6, 12, 'X'],  [13, 12, 16, 12, 'X'],
+                    [11, 16, 12, 16, '='],                     // doorway back to the arena
+                ]),
+                spawn: [11, 15],
+                doors: [
+                    { id:'pit_out', x:11, y:16, dir:'right', to:'arena', tx:26, ty:10, label:'ARENA' },
+                ],
+                enemies: [
+                    { id:'glitch_wisp', x:6, y:6, name:'GLITCH WISP', hp:60 },
+                ],
+                triggers: [
+                    { id:'pit_tip', x:8, y:2, w:8, h:3, dialog:'pit_tip' },
+                ],
+            },
+        },
+        dialogs: {
+            welcome:      { name:'ZIGGY', pages:[
+                'Welcome to Zig Zag Town! Press DOWN to switch worlds.',
+                'One step down and the whole world flips. Try it!' ] },
+            mira_tip:     { name:'MIRA', pages:[
+                'The ZAG world is dangerous... but that\'s where the levels are.',
+                'Gear up first. The neon side does not forgive.' ] },
+            rex_tip:      { name:'REX', pages:[
+                'I heard there\'s a powerful enemy guarding the north door.',
+                'Clear it, and the north gate will answer to you.' ] },
+            pip_inv:      { name:'PIP', pages:[
+                'Press E to check your inventory. You\'ll need weapons!',
+                'A bare-handed rhythm hero is a short-lived rhythm hero.' ] },
+            echo_rhythm:  { name:'ECHO', pages:[
+                'The rhythm of this world... can you hear it?',
+                'Every step you take lands on the beat. Keep walking.' ] },
+            intro:        { name:'TOWN CRIER', pages:[
+                'Festival day in Zig Zag Town!',
+                'Doors hum. The neon side waits beneath your feet.' ] },
+            clerk:        { name:'CLERK', pages:[
+                'Mira\'s shop — shuttered for the festival.',
+                'Word is the ZAG arenas pay well. Try your luck there.' ] },
+            pianist:      { name:'PIANO', pages:[
+                'A note is taped to the keys: "Out practicing. Back at dusk."',
+                'Faint piano drifts through the room anyway.' ] },
+            coach:        { name:'COACH', pages:[
+                'Welcome to the Neon Arena!',
+                'Beat a warden at the town gates to unlock their trial.' ] },
+            arena_banner: { name:'ARENA', pages:[
+                'The crowd is made of static. It still cheers.',
+                'Every note you hit lands harder in here.' ] },
+            pit_tip:      { name:'SIGNAL', pages:[
+                'Down here the static gets teeth.',
+                'Clear the EAST GATE warden to open the way back.' ] },
+        },
+    };
+}
+
+// ---------------------------------------------------------------------------
+// terrain parsing + tile <-> world helpers
+// ---------------------------------------------------------------------------
+
+function owParseTerrain(rows, W, H)
+{
+    const t = new Uint8Array(W*H);
+    for (let y = 0; y < H; ++y)
+    {
+        const row = rows && typeof rows[y] == 'string' ? rows[y] : '';
+        for (let x = 0; x < W; ++x)
+        {
+            const ch = row[x] || '.';
+            t[y*W + x] = ch == '#' ? TILE_WALL
+                       : ch == 'X' || ch == 'B' ? TILE_BLOCK
+                       : ch == '=' ? TILE_PATH : TILE_FLOOR;
+        }
+    }
+    return t;
 }
 
 // is a circle of radius r at p overlapping a solid tile?
@@ -333,6 +670,16 @@ const tileCenter = (tx, ty)=> vec2(tx - WORLD_W/2 + .5, ty - WORLD_H/2 + .5);
 const tileType   = (tx, ty)=> tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H
                             ? TILE_WALL : worldTiles[ty*WORLD_W + tx];
 const tileSolid  = (tx, ty)=> tileType(tx, ty) === TILE_WALL || tileType(tx, ty) === TILE_BLOCK;
+
+/** a door's `dir` string as a facing vector */
+function owDirVec(dir)
+{
+    return dir == 'up'    ? vec2(0, 1)
+         : dir == 'down'  ? vec2(0, -1)
+         : dir == 'left'  ? vec2(-1, 0)
+         : dir == 'right' ? vec2(1, 0)
+         : null;
+}
 
 // stable per-tile hash for scatter (tufts, etc)
 function owHash(x, y, s)
@@ -444,7 +791,7 @@ function makeAmbient()
     for (const e of owAmbient)
         if (!e.destroyed) e.destroy();
     owAmbient.length = 0;
-    if (!worldBuilt || !WORLD_W) return;
+    if (!worldTiles || !WORLD_W) return;
 
     // slow additive sparks drifting up out of the ground
     owAmbient.push(new ParticleEmitter(vec2(0, 0), PI/2, vec2(WORLD_W-4, WORLD_H-4), 0, W.sparkRate,
@@ -455,14 +802,15 @@ function makeAmbient()
         .006, .02, 1, 1, 0,                 // speed, angleSpeed, damping, angleDamping, gravity
         PI, .35, .35, false, true));
 
-    // a brighter fountain of sparks right out of the portal
-    owAmbient.push(new ParticleEmitter(portalPos, PI/2, .8, 0, 26,
-        .5, undefined,
-        P.sparkA, P.sparkB,
-        alpha(P.sparkA, 0), alpha(P.sparkB, 0),
-        1.6, .22, .02,
-        .05, .08, .98, 1, 0,
-        .6, .25, .5, false, true));
+    // a brighter fountain of sparks right out of the portal (when there is one)
+    if (owPortalActive)
+        owAmbient.push(new ParticleEmitter(portalPos, PI/2, .8, 0, 26,
+            .5, undefined,
+            P.sparkA, P.sparkB,
+            alpha(P.sparkA, 0), alpha(P.sparkB, 0),
+            1.6, .22, .02,
+            .05, .08, .98, 1, 0,
+            .6, .25, .5, false, true));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -582,9 +930,9 @@ class WorldDecor extends EngineObject
 {
     constructor(d)
     {
-        super(d.pos, vec2(2, 3), undefined, 0, WHITE, 1);
+        super(tileCenter(d.x, d.y), vec2(2, 3), undefined, 0, WHITE, 1);
         this.kind = d.kind;
-        this.seed = d.seed;
+        this.seed = rand(0, 6.28);
         this.mass = 0;
     }
     render()
@@ -681,16 +1029,19 @@ class Portal extends EngineObject
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// doors — ZAG arena gates (gated by ZZ.defeatedEnemies) and ZIG town doors
+// doors — warp doors (A3: walk on / ENTER fades into the linked room), ZAG
+// arena gates (held by ZZ.defeatedEnemies[lockedBy]) and plain flavor doors
 ///////////////////////////////////////////////////////////////////////////////
 
 class WorldDoor extends EngineObject
 {
     constructor(d)
     {
-        super(tileCenter(d.tile[0], d.tile[1]), vec2(1.7, 2.2), undefined, 0, WHITE, 6);
+        super(tileCenter(d.x, d.y), vec2(1.7, 2.2), undefined, 0, WHITE, 6);
         this.def = d;
-        this.enemyId = d.enemy || null;
+        this.tx = d.x | 0;
+        this.ty = d.y | 0;
+        this.enemyId = d.lockedBy || d.enemy || null;
         this.mass = 0;
         this.lockFlash = 0;
         this.openAnim = 0;
@@ -699,16 +1050,45 @@ class WorldDoor extends EngineObject
         this.phase = rand(0, 6.28);
     }
 
-    defeated() { return !!(this.enemyId && ZZ.defeatedEnemies[this.enemyId]); }
-    open()     { return !!this.def.open || this.defeated(); }
-    member()   { return this.def.worlds.indexOf(currentWorld) >= 0; }
-    alphaNow() { return owMembershipAlpha(this.def.worlds); }
+    defeated()  { return !!(this.enemyId && ZZ.defeatedEnemies[this.enemyId]); }
+    locked()    { return !!(this.enemyId && !ZZ.defeatedEnemies[this.enemyId]); }
+    open()      { return !!this.def.open || !!this.def.to || this.defeated(); }
+    links()     { return !!this.def.to && !!owRooms[this.def.to]; }
+    member()    { return this.def.worlds.indexOf(currentWorld) >= 0; }
+    alphaNow()  { return owMembershipAlpha(this.def.worlds); }
 
     update()
     {
         this.lockFlash = Math.max(0, this.lockFlash - timeDelta*2.5);
         this.openAnim  = Math.max(0, this.openAnim  - timeDelta*.7);
         this.cool      = Math.max(0, this.cool - timeDelta);
+    }
+
+    /** the player stepped onto this door tile — bump, warp, or nothing */
+    onEnter()
+    {
+        if (this.locked())
+        {
+            if (this.cool > 0) return false;   // already bumped recently
+            this.bump();
+            return false;
+        }
+        if (this.def.to) return owBeginWarp(this);
+        return false;
+    }
+
+    /** locked: red flash + "the enemy blocks your path" — no teleport */
+    bump()
+    {
+        this.lockFlash = 1;
+        this.cool = DATA.tuning.doorCooldown;
+        if (typeof flash != 'undefined')
+        {
+            flash = Math.max(flash, .55);
+            flashColor = DATA.c.bad.copy();
+        }
+        owDialogShow(this.def.enemyName || 'WARDEN', ['The enemy blocks your path!']);
+        return false;
     }
 
     render()
@@ -766,15 +1146,15 @@ class WorldDoor extends EngineObject
         // label when the player is close
         if (near > .05 && !lock)
         {
-            const state_ = open ? 'OPEN' : 'LOCKED';
-            drawText(this.def.label, p.add(vec2(0, 1.7)), .34,
+            const state_ = this.locked() ? 'LOCKED' : open ? 'OPEN' : 'SEALED';
+            drawText(this.def.label || '', p.add(vec2(0, 1.7)), .34,
                 alpha(open ? P.doorOpen : DATA.c.ink, (.6 + .4*near)*a),
                 0, P.shade, 'center', DATA.ui.font);
             drawText(state_, p.add(vec2(0, 1.4)), .24,
                 alpha(open ? P.doorOpen : DATA.c.bad, (.55 + .35*pulse)*a),
                 0, P.shade, 'center', DATA.ui.font);
             if (open)
-                drawText('[ ENTER ]', p.add(vec2(0, -1.0)), .22,
+                drawText(this.links() ? '[ WALK IN ]' : '[ ENTER ]', p.add(vec2(0, -1.0)), .22,
                     alpha(DATA.c.ink, (.5 + .4*pulse)*a), 0, P.shade, 'center', DATA.ui.soft);
         }
     }
@@ -806,72 +1186,97 @@ class WorldGuard extends EngineObject
     render()
     {
         if (this.door.defeated()) return;
-        const a = owMembershipAlpha(this.door.def.worlds);
-        if (a <= .01) return;
-        const C = DATA.c, P = owPal, p = this.pos, t = time + this.phase;
-        const bob = sin(t*3)*.07;
-        const dv = player ? player.pos.subtract(p) : vec2();
-        const look = dv.length() > .01 ? dv.normalize() : vec2();
-        const at = (x, y)=> p.add(vec2(x, y + bob));
-
-        // hover shadow
-        drawEllipse(at(0, -.55), vec2(.75, .28), alpha(P.shade, .5*a));
-
-        // rotating spike crown
-        setAdditiveBlendMode(true);
-        drawCircle(at(0, .1), .8 + sin(t*4)*.06, alpha(C.violet, .16*a));
-        setAdditiveBlendMode(false);
-        for (let i = 0; i < 7; ++i)
-        {
-            const ang = t*.9 + i*PI*2/7;
-            const q = at(cos(ang)*.42, .1 + sin(ang)*.42);
-            drawRegularPoly(q, vec2(.24, .34), 3, alpha(C.magenta, .95*a), 0,
-                alpha(C.bg, .7), ang + PI/2);
-        }
-
-        // body
-        drawRegularPoly(at(0, .1), vec2(.78, .7), 9, alpha(C.violet, .98*a), .04,
-            alpha(C.bg, .85*a), t*.4);
-        drawRegularPoly(at(0, .1), vec2(.56, .5), 9, alpha(OW_GUARD_CORE, .9*a), 0, 0, -t*.3);
-
-        // eyes that track the player
-        for (const s of [-1, 1])
-        {
-            const ex = s*.16 + look.x*.06, ey = .18 + look.y*.05;
-            drawEllipse(at(ex, ey), vec2(.15, .19), alpha(C.ink, .98*a));
-            drawCircle(at(ex + look.x*.05, ey + look.y*.05), .07, alpha(C.bg, .98*a));
-            drawCircle(at(ex + look.x*.07, ey + look.y*.07), .03, alpha(C.neon, .95*a));
-        }
-        // angry brow
-        for (const s of [-1, 1])
-            drawLine(at(s*.05, .36), at(s*.3, .3), .06, alpha(C.magenta, .95*a));
-
-        // a jagged mouth of static
-        const mouth = [];
-        for (let i = 0; i <= 6; ++i)
-            mouth.push(at(-.24 + i*.08, .02 + (i % 2 ? -.05 : .04)));
-        drawLineList(mouth, .05, alpha(C.cyan, .9*a));
+        owDrawGlitchBeast(this.pos, owMembershipAlpha(this.door.def.worlds),
+            this.phase, this.seed);
     }
 }
 
+/** a free-standing glitch beast (room `enemies` entries from the A2 schema) */
+class WorldFoe extends EngineObject
+{
+    constructor(e)
+    {
+        super(tileCenter(e.x, e.y), vec2(1.2, 1.2), undefined, 0, WHITE, 7);
+        this.def = e;
+        this.mass = 0;
+        this.phase = rand(0, 6.28);
+        this.seed  = rand(0, 6.28);
+    }
+    render()
+    {
+        const bob = sin(time*2.4 + this.phase)*.08;
+        owDrawGlitchBeast(this.pos.add(vec2(0, bob)),
+            owMembershipAlpha(this.def.worlds), this.phase, this.seed);
+    }
+}
+
+/** shared procedural render for guards + room foes */
+function owDrawGlitchBeast(p, a, phase, seed)
+{
+    if (a <= .01) return;
+    const C = DATA.c, t = time + phase;
+    const dv = player ? player.pos.subtract(p) : vec2();
+    const look = dv.length() > .01 ? dv.normalize() : vec2();
+    const at = (x, y)=> p.add(vec2(x, y));
+
+    // hover shadow
+    drawEllipse(at(0, -.55), vec2(.75, .28), alpha(owPal.shade, .5*a));
+
+    // rotating spike crown
+    setAdditiveBlendMode(true);
+    drawCircle(at(0, .1), .8 + sin(t*4)*.06, alpha(C.violet, .16*a));
+    setAdditiveBlendMode(false);
+    for (let i = 0; i < 7; ++i)
+    {
+        const ang = t*.9 + i*PI*2/7;
+        const q = at(cos(ang)*.42, .1 + sin(ang)*.42);
+        drawRegularPoly(q, vec2(.24, .34), 3, alpha(C.magenta, .95*a), 0,
+            alpha(DATA.c.bg, .7), ang + PI/2);
+    }
+
+    // body
+    drawRegularPoly(at(0, .1), vec2(.78, .7), 9, alpha(C.violet, .98*a), .04,
+        alpha(C.bg, .85*a), t*.4);
+    drawRegularPoly(at(0, .1), vec2(.56, .5), 9, alpha(OW_GUARD_CORE, .9*a), 0, 0, -t*.3);
+
+    // eyes that track the player
+    for (const s of [-1, 1])
+    {
+        const ex = s*.16 + look.x*.06, ey = .18 + look.y*.05;
+        drawEllipse(at(ex, ey), vec2(.15, .19), alpha(C.ink, .98*a));
+        drawCircle(at(ex + look.x*.05, ey + look.y*.05), .07, alpha(C.bg, .98*a));
+        drawCircle(at(ex + look.x*.07, ey + look.y*.07), .03, alpha(C.neon, .95*a));
+    }
+    // angry brow
+    for (const s of [-1, 1])
+        drawLine(at(s*.05, .36), at(s*.3, .3), .06, alpha(C.magenta, .95*a));
+
+    // a jagged mouth of static
+    const mouth = [];
+    for (let i = 0; i <= 6; ++i)
+        mouth.push(at(-.24 + i*.08, .02 + (i % 2 ? -.05 : .04)));
+    drawLineList(mouth, .05, alpha(C.cyan, .9*a));
+}
+
 ///////////////////////////////////////////////////////////////////////////////
-// NPCs — the ZIG town cast, idle sprites from the Tiny Neighbours sheets
+// NPCs — the town cast, idle sprites from the Tiny Neighbours sheets
 ///////////////////////////////////////////////////////////////////////////////
 
 class WorldNPC extends EngineObject
 {
     constructor(d)
     {
-        super(tileCenter(d.tile[0], d.tile[1]), vec2(1, 1.3), undefined, 0, WHITE, 4);
+        super(tileCenter(d.x, d.y), vec2(1, 1.3), undefined, 0, WHITE, 4);
         this.def = d;
         this.sheet = d.sheet;
         this.cell = d.cell === undefined ? 8 : d.cell;
+        this.worlds = d.worlds;
         this.phase = rand(0, 6.28);
         this.mass = 0;
         this.prompt = 0;
     }
 
-    alphaNow() { return owMembershipAlpha(NPC_WORLDS); }
+    alphaNow() { return owMembershipAlpha(this.worlds); }
 
     update()
     {
@@ -956,8 +1361,8 @@ class Player extends EngineObject
         if (state != 'world') return;
         const W = DATA.world, dt = timeDelta;
 
-        // frozen while a dialog is on screen
-        if (typeof Dialog != 'undefined' && Dialog.isOpen())
+        // frozen while a dialog is on screen or the screen is fading through a door
+        if (owWarp || (typeof Dialog != 'undefined' && Dialog.isOpen()))
         {
             this.vel = vec2();
             this.trail.length = 0;
@@ -1012,14 +1417,17 @@ class Player extends EngineObject
             this.facing = this.facing.lerp(dir, .3).normalize();
 
         // ---- the portal (talk / doors get the interact key first) -----------
-        const d = this.pos.subtract(portalPos).length();
-        const talking = typeof Dialog != 'undefined' && Dialog.inputLocked();
-        const busy = talking || !!owInteractableAt(this.pos);
-        const press = keyWasPressed('Space') || keyWasPressed('Enter') || keyWasPressed('NumpadEnter');
-        if (d < W.portalRange || (!busy && press) && d < W.portalPrompt)
-            enterStage();
-        else if (!busy && mouseWasPressed(0) && d < W.portalPrompt)
-            enterStage();
+        if (owPortalActive)
+        {
+            const d = this.pos.subtract(portalPos).length();
+            const talking = typeof Dialog != 'undefined' && Dialog.inputLocked();
+            const busy = talking || !!owInteractableAt(this.pos);
+            const press = keyWasPressed('Space') || keyWasPressed('Enter') || keyWasPressed('NumpadEnter');
+            if (d < W.portalRange || (!busy && press) && d < W.portalPrompt)
+                enterStage();
+            else if (!busy && mouseWasPressed(0) && d < W.portalPrompt)
+                enterStage();
+        }
     }
 
     // one leg of the staircase: hold an axis until aligned with the cursor, then flip
@@ -1199,45 +1607,183 @@ function owNpcBlocked(p, r)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// entering / leaving the hub
+// room entry / exit — the heart of the multi-room world (A3)
 ///////////////////////////////////////////////////////////////////////////////
+
+/** destroy every live room object (the player survives) */
+function owClearRoomObjects()
+{
+    for (const arr of [owNpcs, owDoors, owEnemies, owAmbient, owBackdrops, owStatics])
+    {
+        for (const o of arr)
+            if (o && !o.destroyed) o.destroy();
+        arr.length = 0;
+    }
+    owNear = null;
+}
+
+/**
+ * Enter a room from the registry: parse terrain, rebuild every object, place
+ * the player. `spawn` is a tile [x,y] (falls back to the room's own spawn);
+ * `facing` is a vec2 the player should look along after a warp.
+ */
+function owEnterRoom(id, spawn, facing)
+{
+    const room = owRooms[id];
+    if (!room) return false;
+    owRoomId = id;
+
+    WORLD_W = room.size[0]; WORLD_H = room.size[1];
+    worldTiles = owParseTerrain(room.terrain, WORLD_W, WORLD_H);
+
+    owClearRoomObjects();
+    for (const k in owTrigFlags) delete owTrigFlags[k];
+
+    // settle the palette: a Down-switch never changes rooms, but warping into
+    // a single-world room snaps the palette so the geometry always reads
+    owSwitchT = 1;
+    owSwitchFrom = owSwitchTo = owSwitchFromName = null;
+    if (room.world == 'zig' || room.world == 'zag') currentWorld = room.world;
+    owPal = DATA.pal[currentWorld];
+
+    // statics: floor, decor, portal
+    owStatics.push(new WorldFloor());
+    worldDecor.length = 0;
+    for (const d of room.decor)
+    {
+        worldDecor.push(d);
+        owStatics.push(new WorldDecor(d));
+    }
+    owPortalActive = !!room.portal;
+    portalPos = owPortalActive ? tileCenter(room.portal[0], room.portal[1]) : vec2(1e6, 1e6);
+    if (owPortalActive) owStatics.push(new Portal(portalPos));
+
+    // doors (+ a guard beside every still-locked one)
+    for (const d of room.doors)
+    {
+        const door = new WorldDoor(d);
+        owDoors.push(door);
+        if (door.enemyId && !ZZ.defeatedEnemies[door.enemyId])
+            owEnemies.push(new WorldGuard(door));
+    }
+    for (const n of room.npcs)
+        owNpcs.push(new WorldNPC(n));
+    for (const e of room.enemies)
+        owEnemies.push(new WorldFoe(e));
+
+    // the player — created on first entry, teleported on every warp after
+    const st = spawn || room.spawn || [WORLD_W >> 1, WORLD_H >> 1];
+    const pos = tileCenter(st[0]|0, st[1]|0);
+    if (!player)
+        player = new Player(pos.copy());
+    else
+    {
+        player.pos = pos.copy();
+        player.vel = vec2();
+        player.trail.length = 0;
+        player.zigTarget = null;
+        if (facing && facing.length && facing.length() > .01)
+            player.facing = facing.normalize().copy();
+    }
+    // never re-trigger a door the player is standing in when they arrive
+    for (const dr of owDoors)
+        dr.inside = player.pos.subtract(dr.pos).length() < DATA.tuning.doorRange;
+
+    if (typeof cameraPos != 'undefined') cameraPos = player.pos.copy();
+    if (typeof cameraScale != 'undefined')
+        cameraScale = room.camScale || DATA.world.camScale;
+
+    makeBackdrop();
+    makeAmbient();
+    return true;
+}
 
 function initWorld()
 {
     owSyncZZ();
-    if (!worldBuilt) { buildWorld(); worldBuilt = true; }
+    owBootWorld();                       // WorldFormat world if valid, else default
 
     // settle any half-finished world switch before rebuilding
     owSwitchT = 1;
     owSwitchFrom = owSwitchTo = owSwitchFromName = null;
     owPal = DATA.pal[currentWorld];
+    owWarp = null;
 
-    cameraPos = worldSpawn.copy();
-    cameraScale = DATA.world.camScale;
-
-    owNpcs.length = 0; owDoors.length = 0; owEnemies.length = 0;
-    owAmbient.length = 0; owBackdrops.length = 0;
-    owNear = null;
     if (typeof Dialog != 'undefined' && Dialog.isOpen()) Dialog.close();
-
-    makeBackdrop();
-    new WorldFloor();
-    for (const d of worldDecor) new WorldDecor(d);
-    new Portal(portalPos);
-
-    for (const d of WORLD_DOORS)
-    {
-        const door = new WorldDoor(d);
-        owDoors.push(door);
-        if (d.enemy && !ZZ.defeatedEnemies[d.enemy])
-            owEnemies.push(new WorldGuard(door));
-    }
-    for (const n of WORLD_NPCS)
-        owNpcs.push(new WorldNPC(n));
-
-    makeAmbient();
-    player = new Player(worldSpawn.copy());
+    owEnterRoom(owRooms[owRoomId] ? owRoomId : owListRooms()[0], null, null);
     owLoadSprites();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// door warps — 0.35s fade to black, swap rooms, fade back in (A3)
+///////////////////////////////////////////////////////////////////////////////
+
+let owWarp = null;   // { t, phase:'out'|'in', door } while a transition runs
+
+function owWarpTime() { return (DATA.tuning && DATA.tuning.doorFade) || .35; }
+function owWarping()  { return !!owWarp; }
+/** 0..1 blackness of the door-warp fade, for owRender */
+function owWarpFade() { return owWarp ? clamp(owWarp.phase == 'out'
+    ? owWarp.t / owWarpTime() : 1 - owWarp.t / owWarpTime()) : 0; }
+
+/** start fading through a warp door; returns false when it cannot run */
+function owBeginWarp(dr)
+{
+    if (owWarp || !dr || dr.destroyed) return false;
+    const target = dr.def.to;
+    if (!target || !owRooms[target])
+    {
+        owDialogShow(dr.def.label || 'DOOR', ['It leads nowhere.']);
+        return false;
+    }
+    if (typeof Dialog != 'undefined' && Dialog.isOpen()) Dialog.close();
+    if (player) { player.vel = vec2(); player.zigTarget = null; }
+    dr.inside = true;
+    owWarp = { t: 0, phase: 'out', door: dr.def, from: owRoomId };
+    return true;
+}
+
+/** advance the fade; the room swap happens at the black midpoint */
+function owTickWarp(dt)
+{
+    if (!owWarp) return;
+    owWarp.t += dt;
+    if (owWarp.t < owWarpTime()) return;
+
+    if (owWarp.phase == 'out')
+    {
+        const d = owWarp.door;
+        const facing = owDirVec(d.dir) || (player && player.facing) || vec2(0, -1);
+        owEnterRoom(d.to, [+d.tx || 0, +d.ty || 0], facing);
+        owWarp.phase = 'in';
+        owWarp.t = 0;
+    }
+    else
+        owWarp = null;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// triggers — A2 schema `triggers:[{x,y,w,h,dialog}]`, fired on walk-in
+///////////////////////////////////////////////////////////////////////////////
+
+function owTickTriggers()
+{
+    const room = owGetRoomDef();
+    if (!room || !room.triggers.length || !player) return;
+    const tx = Math.floor(player.pos.x + WORLD_W/2), ty = Math.floor(player.pos.y + WORLD_H/2);
+    for (let i = 0; i < room.triggers.length; ++i)
+    {
+        const tr = room.triggers[i];
+        if (owMembershipAlpha(tr.worlds) < .5) continue;
+        const inside = tx >= tr.x && tx < tr.x + tr.w && ty >= tr.y && ty < tr.y + tr.h;
+        const was = !!owTrigFlags[i];
+        owTrigFlags[i] = inside;
+        if (inside && !was && !owWorldSwitching())
+        {
+            const dlg = tr.dialog ? owDialogById(tr.dialog) : null;
+            if (dlg) owDialogShow(dlg.name, dlg.pages);
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1261,6 +1807,27 @@ function owDialogShow(name, lines, opts)
         return false;
     Dialog.show(name, lines, opts);
     return true;
+}
+
+/**
+ * Hand an open ZAG gate to the battle lane: ZZ.startBattle(enemyId, def).
+ * `def` is the door's definition object from the room registry (id, x, y,
+ * to/tx/ty when it is also a warp, lockedBy/enemy, label, enemyName, worlds).
+ * We never define ZZ.startBattle ourselves — the battle lane owns it.
+ */
+function owStartBattle(dr)
+{
+    const id = dr.def.lockedBy || dr.def.enemy || dr.enemyId;
+    try
+    {
+        if (typeof window != 'undefined' && window.ZZ &&
+            typeof window.ZZ.startBattle == 'function')
+        { window.ZZ.startBattle(id, dr.def); return true; }
+    }
+    catch (e) {}
+    if (typeof ZZ != 'undefined' && ZZ && typeof ZZ.startBattle == 'function')
+    { ZZ.startBattle(id, dr.def); return true; }
+    return false;
 }
 
 function owUpdate(dt)
@@ -1287,9 +1854,22 @@ function owUpdate(dt)
     if (typeof Dialog != 'undefined') Dialog.update(dt);
     const locked = typeof Dialog != 'undefined' && Dialog.inputLocked();
 
-    // ---- ZIG <-> ZAG on physical ArrowDown ---------------------------------
+    // a door-warp fade owns the screen until it finishes
+    if (owWarp) { owTickWarp(dt); return; }
+
+    // ---- ZIG <-> ZAG on physical ArrowDown (palette only — same room) ------
+    const room = owGetRoomDef();
     if (!locked && !owWorldSwitching() && owPressed('ArrowDown') && owArrowDownPhysical())
-        owSetWorld(currentWorld == 'zig' ? 'zag' : 'zig');
+    {
+        // rooms tagged zig/zag are single-world: the toggle politely refuses
+        if (!room || room.world == 'both')
+            owSetWorld(currentWorld == 'zig' ? 'zag' : 'zig');
+        else if (typeof flash != 'undefined')
+        {
+            flash = Math.max(flash, .15);
+            flashColor = DATA.c.dim.copy();
+        }
+    }
 
     if (locked) { owNear = null; return; }
 
@@ -1302,14 +1882,20 @@ function owUpdate(dt)
         if (pressed)
         {
             if (hit.kind == 'npc')
-                owDialogShow(hit.obj.def.name, hit.obj.def.lines,
+            {
+                const dlg = hit.obj.def.dialog ? owDialogById(hit.obj.def.dialog) : null;
+                if (dlg) owDialogShow(dlg.name, dlg.pages,
                     { portrait: hit.obj.sheet, cell: hit.obj.cell });
+                else
+                    owDialogShow(hit.obj.def.name, hit.obj.def.lines,
+                        { portrait: hit.obj.sheet, cell: hit.obj.cell });
+            }
             else
                 owActDoor(hit.obj);
         }
     }
 
-    // ---- walking into a locked door trips the guard ------------------------
+    // ---- walking onto a door tile: bump when locked, warp when linked ------
     if (player)
         for (const dr of owDoors)
         {
@@ -1319,40 +1905,29 @@ function owUpdate(dt)
             if (inside && !dr.inside)
             {
                 dr.inside = true;
-                if (dr.enemyId && !dr.defeated() && dr.cool <= 0)
-                {
-                    dr.lockFlash = 1;
-                    dr.cool = DATA.tuning.doorCooldown;
-                    owDialogShow(dr.def.enemyName || 'WARDEN',
-                        ['The enemy blocks your path!']);
-                }
+                dr.onEnter();
+                if (owWarp) break;              // the fade took over
             }
             else if (!inside)
                 dr.inside = false;
         }
+
+    // ---- walk-in triggers --------------------------------------------------
+    if (!owWarp) owTickTriggers();
 }
 
 /** Enter was pressed next to a door */
 function owActDoor(dr)
 {
-    if (dr.enemyId && !dr.defeated())
-    {
-        dr.lockFlash = 1;
-        dr.cool = DATA.tuning.doorCooldown;
-        owDialogShow(dr.def.enemyName || 'WARDEN', ['The enemy blocks your path!']);
-        return;
-    }
+    if (dr.locked()) { dr.bump(); return; }
+    if (dr.def.to)   { owBeginWarp(dr); return; }
     if (dr.def.open)
     {
         owDialogShow(dr.def.label, dr.def.flavor || ['It is closed.']);
         return;
     }
-    // an arena gate with its enemy already beaten
-    if (typeof ZZ.startBattle == 'function')
-    {
-        ZZ.startBattle(dr.enemyId, dr.def);
-        return;
-    }
+    // an arena gate with its enemy already beaten — hand off to the battle lane
+    if (owStartBattle(dr)) return;
     owDialogShow(dr.def.label, ['The gate stands open. Something waits beyond.']);
 }
 
@@ -1366,6 +1941,12 @@ function owRender()
 {
     if (typeof Dialog != 'undefined' && Dialog.isOpen())
         Dialog.render();
+
+    // door-warp fade (0.35s out to near-black, 0.35s back in)
+    const fade = owWarpFade();
+    if (fade > .002 && typeof mainCanvasSize != 'undefined')
+        drawRect(mainCanvasSize.scale(.5), mainCanvasSize,
+            alpha(DATA.c.bg, fade), 0, true, true);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////
-// ZIGZAG SYNTH — hud.js
+// MuZiC "Switch" — hud.js
 // Every overlay the player reads: title, hub, play field and results.
 // All of it is drawn in screen space (origin top-left, y grows downward).
 ///////////////////////////////////////////////////////////////////////////////
@@ -128,7 +128,6 @@ function uiVignette(strength)
 function hudTitle()
 {
     const S = mainCanvasSize, C = DATA.c, cx = S.x/2;
-    const titleSize = clamp(S.x*.115, 44, 116);
 
     // sky
     drawRectGradient(vec2(S.x/2, S.y/2), S, C.bgTop, C.bgBot, 0, true, true);
@@ -150,8 +149,12 @@ function hudTitle()
     uiVignette(.6);
 
     // ---- logo ---------------------------------------------------------------
+    // the game title is 13 chars now — shrink to fit, and cap the width
     const logoY = S.y*.30;
-    const word = 'ZIGZAG', opts = { align:'center', font: DATA.ui.font, style:'900' };
+    const word = 'MuZiC "Switch"',
+          opts = { align:'center', font: DATA.ui.font, style:'900',
+                   maxWidth: S.x*.86 };
+    const titleSize = clamp(S.x*.076, 30, 76);
     const jitter = sin(HUD.t*8)*.6;
     uiSpaced(word, cx - 6, logoY + 6, titleSize, alpha(C.cyan, .55), titleSize*.045, opts);
     uiSpaced(word, cx + 6, logoY - 4, titleSize, alpha(C.neon, .6), titleSize*.045, opts);
@@ -159,7 +162,7 @@ function hudTitle()
         Object.assign({ lineWidth: titleSize*.16, lineColor: C.bg }, opts));
 
     // the rule under the logo is itself a zig-zag
-    const ruleW = Math.min(S.x*.62, titleSize*4.6);
+    const ruleW = Math.min(S.x*.62, titleSize*6.4);
     uiZigRule(cx - ruleW/2, cx + ruleW/2, logoY + titleSize*.78,
         14, titleSize*.07, 4, alpha(C.neon, .55));
     uiZigRule(cx - ruleW/2, cx + ruleW/2, logoY + titleSize*.78,
@@ -205,8 +208,8 @@ function hudTitle()
     uiText('WALK', cx - cw/2 + 26, cy2 + row[0], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
     uiText('ARROWS  /  WASD', cx + cw/2 - 26, cy2 + row[0], 16, C.ink,
         { align:'right', font: DATA.ui.font });
-    uiText('ZIGZAG TO THE CURSOR', cx - cw/2 + 26, cy2 + row[1], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
-    uiText('HOLD / TAP THE MOUSE', cx + cw/2 - 26, cy2 + row[1], 16, C.neonSoft,
+    uiText('HOLD + TAP NOTES', cx - cw/2 + 26, cy2 + row[1], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
+    uiText('← →   ·   ↑ FLICK   ·   ↓ SWAP', cx + cw/2 - 26, cy2 + row[1], 16, C.neonSoft,
         { align:'right', font: DATA.ui.font });
     uiText('ENTER THE STAGE', cx - cw/2 + 26, cy2 + row[2], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
     uiText('WALK IN  ·  SPACE', cx + cw/2 - 26, cy2 + row[2], 16, C.cyan,
@@ -244,8 +247,8 @@ function hudWorld()
 
     // ---- logo chip, top left ------------------------------------------------
     uiPanel(16, 14, 208, 54, alpha(C.neon, .45), 14);
-    uiText('ZIGZAG', 34, 32, 20, C.ink, { font: DATA.ui.font, style:'900' });
-    uiText('SYNTH', 34, 52, 12, C.cyan, { font: DATA.ui.font, style:'900' });
+    uiText('MuZiC', 34, 32, 20, C.ink, { font: DATA.ui.font, style:'900' });
+    uiText('"SWITCH"', 34, 52, 12, C.cyan, { font: DATA.ui.font, style:'900' });
     uiZig([vec2(150, 26), vec2(162, 38), vec2(174, 26), vec2(186, 38), vec2(198, 26)],
         2.5, alpha(C.neon, .8));
 
@@ -277,22 +280,33 @@ function hudWorld()
     uiText(String(best).padStart(6, '0'), S.x - 34, 50, 22, C.gold,
         { align:'right', font: DATA.ui.font, style:'900' });
 
+    // ---- room name, under the top strip -------------------------------------
+    const roomName = (typeof owGetRoomName == 'function' ? owGetRoomName() : '');
+    if (roomName)
+        uiText(roomName.toUpperCase(), S.x/2, 86, 13, alpha(C.dim, .75),
+            { align:'center', font: DATA.ui.font });
+
     // ---- control hints, bottom left (hidden while a dialog is up) -----------
     if (!talking)
     {
-        const hy = S.y - 72;
+        const hy = S.y - 112;
         uiText('Move', 24, hy, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('WASD / ARROWS', 168, hy, 14, C.ink, { font: DATA.ui.font, style:'900' });
-        uiText('Switch world', 24, hy + 20, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('DOWN', 168, hy + 20, 14, accent, { font: DATA.ui.font, style:'900' });
-        uiText('Interact', 24, hy + 40, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('ENTER', 168, hy + 40, 14, C.cyan, { font: DATA.ui.font, style:'900' });
-        uiText('Menu', 24, hy + 60, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('ESC', 168, hy + 60, 14, alpha(C.ink, .9), { font: DATA.ui.font, style:'900' });
+        uiText('WASD / ARROWS', 176, hy, 14, C.ink, { font: DATA.ui.font, style:'900' });
+        uiText('Switch world', 24, hy + 18, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('↓', 176, hy + 18, 14, accent, { font: DATA.ui.font, style:'900' });
+        uiText('Inventory', 24, hy + 36, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('E', 176, hy + 36, 14, C.gold, { font: DATA.ui.font, style:'900' });
+        uiText('Menu', 24, hy + 54, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('R / ESC', 176, hy + 54, 14, alpha(C.ink, .9), { font: DATA.ui.font, style:'900' });
+        uiText('Interact', 24, hy + 72, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('ENTER', 176, hy + 72, 14, C.cyan, { font: DATA.ui.font, style:'900' });
+        uiText('Talk', 24, hy + 90, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('SPACE', 176, hy + 90, 14, C.neonSoft, { font: DATA.ui.font, style:'900' });
     }
 
     // ---- the portal prompt --------------------------------------------------
-    if (player && !talking)
+    const portalOn = typeof owPortalActive == 'undefined' ? true : owPortalActive;
+    if (player && !talking && portalOn)
     {
         const d = player.pos.subtract(portalPos).length();
         if (d < DATA.world.portalPrompt)
@@ -357,8 +371,10 @@ function hudPlay()
     }
 
     // ---- hint ---------------------------------------------------------------
-    uiText('TAP NEAR THE LINE   ·   SPACE / ENTER', S.x/2, S.y - 22, 13,
-        alpha(C.dim, .6), { align:'center', font: DATA.ui.soft });
+    // the locked arrow-key model: L/R hold+tap, ↑ flick, ↓ lane swap
+    uiText('←→ HOLD + TAP  ·  ↑ FLICK  ·  ↓ SWAP LANE  ·  ZIGZAG!',
+        S.x/2, S.y - 22, 13, alpha(C.dim, .6),
+        { align:'center', font: DATA.ui.soft });
 
     uiFlash();
 }
