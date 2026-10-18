@@ -1,0 +1,9 @@
+# ZIGZAG song BPM list — plain text (despite the .bmp extension; it is NOT an image).
+# Format:  songID=BPM
+# Optional: songID=BPM,firstBeatSeconds   (when the first beat is not at 0:00)
+# Blank lines and lines starting with # are ignored.
+# Keep a copy of these lines in songs/songs.js ("bpm") so the game can read them from file://.
+1=120
+2=172
+3=90
+4=135
