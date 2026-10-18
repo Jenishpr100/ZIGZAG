@@ -185,7 +185,7 @@ function hudTitle()
     const pulse = .55 + .45*sin(HUD.t*3.4);
     const wide = Math.min(S.x*.72, 560);
     uiPanel(cx - wide/2, promptY - 30, wide, 60, alpha(C.neon, .5 + pulse*.4), 20);
-    uiText('PRESS  SPACE   /   TAP  TO  START', cx, promptY, clamp(S.x*.026, 15, 26),
+    uiText('PRESS  ENTER   /   TAP  TO  START', cx, promptY, clamp(S.x*.026, 15, 26),
         alpha(C.ink, .55 + pulse*.45),
         { align:'center', font: DATA.ui.font, style:'900' });
 
@@ -233,6 +233,12 @@ function drawTetoScreen(pos, sizePx)
 function hudWorld()
 {
     const S = mainCanvasSize, C = DATA.c;
+    const talking = typeof Dialog != 'undefined' && Dialog.isOpen();
+    const world = (typeof owGetWorld == 'function' ? owGetWorld()
+        : (typeof currentWorld != 'undefined' ? currentWorld : 'zig'));
+    const zag = world == 'zag';
+    const accent = (typeof owPal != 'undefined' && owPal && owPal.accent)
+        || (zag ? C.neon : C.cyan);
 
     uiVignette(.5);
 
@@ -243,6 +249,27 @@ function hudWorld()
     uiZig([vec2(150, 26), vec2(162, 38), vec2(174, 26), vec2(186, 38), vec2(198, 26)],
         2.5, alpha(C.neon, .8));
 
+    // ---- world badge, beside the logo chip ----------------------------------
+    const badgeW = 118, badgeX = 236, pulseB = .5 + .5*sin(HUD.t*2.2);
+    uiPanel(badgeX, 14, badgeW, 54, alpha(accent, .4 + pulseB*.3), 14);
+    uiText('WORLD', badgeX + 16, 30, 10, alpha(C.dim, .9), { font: DATA.ui.font });
+    uiText(zag ? 'ZAG' : 'ZIG', badgeX + badgeW - 16, 44, 26, accent,
+        { align:'right', font: DATA.ui.font, style:'900',
+          lineWidth: 3, lineColor: alpha(C.bg, .8) });
+
+    // ---- world-shift banner -------------------------------------------------
+    if (typeof owWorldSwitching == 'function' && owWorldSwitching())
+    {
+        const from = (typeof owSwitchFromName != 'undefined' && owSwitchFromName || 'zig').toUpperCase();
+        const a = .55 + .45*sin(HUD.t*10);
+        uiSpaced(from + '  →  ' + (zag ? 'ZAG' : 'ZIG'), S.x/2, S.y*.18,
+            clamp(S.x*.045, 22, 46), alpha(accent, a), 5,
+            { align:'center', font: DATA.ui.font, style:'900',
+              lineWidth: 6, lineColor: alpha(C.bg, .85) });
+        uiText('SHIFTING WORLDS', S.x/2, S.y*.18 + clamp(S.x*.035, 16, 34),
+            13, alpha(C.ink, .7), { align:'center', font: DATA.ui.soft });
+    }
+
     // ---- best, top right ----------------------------------------------------
     const bw = 172;
     uiPanel(S.x - bw - 16, 14, bw, 54, alpha(C.gold, .4), 14);
@@ -250,13 +277,22 @@ function hudWorld()
     uiText(String(best).padStart(6, '0'), S.x - 34, 50, 22, C.gold,
         { align:'right', font: DATA.ui.font, style:'900' });
 
-    // ---- control hints, bottom left -----------------------------------------
-    uiText('ARROWS / WASD  walk', 24, S.y - 52, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-    uiText('HOLD MOUSE      zigzag to the cursor', 24, S.y - 32, 14, alpha(C.dim, .85),
-        { font: DATA.ui.soft });
+    // ---- control hints, bottom left (hidden while a dialog is up) -----------
+    if (!talking)
+    {
+        const hy = S.y - 72;
+        uiText('Move', 24, hy, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('WASD / ARROWS', 168, hy, 14, C.ink, { font: DATA.ui.font, style:'900' });
+        uiText('Switch world', 24, hy + 20, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('DOWN', 168, hy + 20, 14, accent, { font: DATA.ui.font, style:'900' });
+        uiText('Interact', 24, hy + 40, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('ENTER', 168, hy + 40, 14, C.cyan, { font: DATA.ui.font, style:'900' });
+        uiText('Menu', 24, hy + 60, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('ESC', 168, hy + 60, 14, alpha(C.ink, .9), { font: DATA.ui.font, style:'900' });
+    }
 
     // ---- the portal prompt --------------------------------------------------
-    if (player)
+    if (player && !talking)
     {
         const d = player.pos.subtract(portalPos).length();
         if (d < DATA.world.portalPrompt)
