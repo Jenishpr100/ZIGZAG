@@ -155,3 +155,49 @@ Plain globals, no bundler. One person per file at a time — say in chat which f
 - [x] M0 template created (index.html, js/data.js, js/audio.js, js/main.js)
 - [ ] M0 tested in browser (open index.html — tap/Space through the demo chart)
 - [ ] M1 starts Oct 19: audio-clock timing, real chart, tap-rule decision
+---
+
+## AMENDMENTS (2026-10-18, queued while lanes in flight)
+
+### A1. Game title rename
+- **Old:** ZIGZAG (temp) → **New:** `MuZiC "Switch"`
+- Applied already: `index.html` (<title>, aria-label, footer, noscript), `README.md`.
+- **Queued for lanes when they land:**
+  - des-2 (hud.js): title screen word (line ~154), HUD corner title (line ~241), results titles → `MuZiC "Switch"` (keep zigzag theme copy elsewhere).
+  - fix-3 (menu.js): logo spans `'ZIGZAG'.split('')` (line ~31) → split `MUZIC SWITCH` or render stylized `MuZiC "Switch"`.
+  - fix-1 (littlejs-game.js): chart default title `'Zigzag Etude'` → keep (song name, fine) but banner wording may mention game name.
+- Theme word "zigzag" stays visible in gameplay/copy (jam theme requirement) — only the *game title* changes.
+
+### A2. DevEdit expands → comprehensive Dialogue + Room + Map Maker/Editor (fix-3 follow-up)
+- Add editor tabs: **BEATMAP** (existing play-to-map) + **WORLD** (rooms/doors/NPCs/dialogue).
+- WORLD tab: draw room grid, place walls/doors/NPCs/enemies/triggers, link doors to target rooms, author dialogue scripts per NPC/trigger (page-per-line, name per speaker).
+- **Export = `GAME.BIN`** (one file, JSON content): all dialogs + all rooms + character placements + door links in a single bundle.
+- New shared schema `muzic-switch-world` v0:
+
+```json
+{
+  "format": "muzic-switch-world", "version": 0,
+  "rooms": {
+    "town": {
+      "name": "Zig Zag Town", "world": "zig",
+      "size": [40, 30],
+      "terrain": ["####........####", "...row strings..."],
+      "doors": [{"id":"d1","x":10,"y":0,"to":"plaza","tx":10,"ty":28,"lockedBy":"boss_north"}],
+      "npcs": [{"id":"npc1","sprite":"NPC_1","x":8,"y":6,"dir":"down","dialog":"welcome"}],
+      "enemies": [{"id":"boss_north","x":30,"y":4,"hp":100,"name":"Static Warden"}],
+      "triggers": [{"x":1,"y":1,"w":3,"h":1,"dialog":"intro_banner"}]
+    }
+  },
+  "dialogs": {
+    "welcome": {"name":"Villager","pages":["Welcome!","Press DOWN to switch worlds."]}
+  }
+}
+```
+- Save: download `GAME.BIN` + also `localStorage` (`muzic-world`) for instant play; main game loads GAME.BIN if present else built-in default world.
+- `levelFormat.js` (beatmap) and world format stay separate files; DevEdit is the one UI editing both.
+
+### A3. Pokémon-style doors (des-2 follow-up)
+- Rooms = separate maps (multi-room world instead of single 40×30 hub).
+- Walk onto door tile → 0.3–0.4s fade to black → player appears at linked door (target room, tx/ty, facing set by door dir) → fade in.
+- `lockedBy` door: if enemy not in `defeatedEnemies` → bump + dialog "The enemy blocks your path!" + red flash (no teleport).
+- Both worlds (zig/zag) may define rooms; Down-switch keeps player in same room (palette swap) — room geometry shared, world only changes palette + visible layers (per A2 `world` field: zig/zag/both).

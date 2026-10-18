@@ -1,4 +1,4 @@
-# ZIGZAG
+# MuZiC "Switch"
 
 A rhythm game in plain HTML, CSS and JavaScript. Tap, hold and drag along a zigzag path to your own MP3s.
 

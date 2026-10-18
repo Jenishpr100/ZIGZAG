@@ -1,11 +1,18 @@
 ///////////////////////////////////////////////////////////////////////////////
-// ZIGZAG SYNTH — main.js
+// ZIGZAG SYNTH — littlejs-game.js
 // Engine init, the title → world → play → results state machine, and the
-// rhythm core (which is functionally the same as the original template).
+// rhythm gameplay (LittleJS port — the old DOM rhythm core lives on as stubs
+// in js/gameplay.js / js/input.js).
+//
+// PLAY INPUT MODEL (locked):
+//   LEFT / RIGHT  press+hold to start & sustain HOLD notes; tap to hit TAPs
+//   UP            flick: tap during a HOLD's flick window (the ↑ on the bar)
+//   DOWN          swap the active lane between BOTTOM (blue, left) and
+//                 TOP (orange, right); CENTER notes can be hit from either
 ///////////////////////////////////////////////////////////////////////////////
 
 let state = 'title';
-let chart, notes = [];
+let chart = null, notes = [];
 let songTime = 0, songStart = 0;
 let score = 0, combo = 0, maxCombo = 0, best = 0, hits = 0;
 let counts = [0, 0, 0, 0];
@@ -13,6 +20,49 @@ let flash = 0, flashColor, shake = 0, judgeLinePulse = 0;
 let camDive = null;         // {t, dur, fromPos, fromScale, toPos, toScale}
 let pendingState = null;
 let muted = false;
+
+// ---- play-state ------------------------------------------------------------
+let activeLane = 'bottom';              // 'bottom' (blue, left) | 'top' (orange, right)
+let laneFlash = { top: 0, bottom: 0, center: 0 };   // per-column hit glow
+let laneSwapPulse = 0;                  // little kick when DOWN swaps lanes
+let songMeta = { title: '', artist: '' };
+let playResult = null;                  // last-run summary for the results screen
+let audioArmed = false, audioStarted = false, audioFailed = false;
+
+// tunables for the stage (kept here so data.js stays untouched)
+const PLAY = {
+    fallTime: 1.6,          // seconds a note takes from spawn to the hit line
+    lineY: -5,              // hit line world y (near centre-bottom of the view)
+    topY: 7,                // where notes spawn
+    hitWindow: .15,         // outer judgment window; finer grades from DATA.judgments
+    laneWidth: 4.8,         // width of one lane column
+    countdown: 2.2,         // lead-in seconds before songTime hits 0
+    colors: {
+        top:      '#ff9a2e',   // orange neon (TOP lane)
+        bottom:   '#3ea6ff',   // blue neon   (BOTTOM lane)
+        center:   '#c8a6ff',   // CENTER notes — neutral, hittable from either lane
+        miss:     '#ff4d5e',
+    },
+};
+
+// lane column world-x: bottom on the left, top on the right, center between
+const laneX = lane => lane == 'top' ? DATA.laneX[1]
+                    : lane == 'bottom' ? DATA.laneX[0] : 0;
+
+// theme-aware lane color (themes.js may override via ZZ.theme.laneTop/laneBottom)
+function playLaneColor(lane)
+{
+    const th = typeof ZZ != 'undefined' && ZZ.theme || null;
+    if (lane == 'top')    return col(th && th.laneTop    || PLAY.colors.top);
+    if (lane == 'bottom') return col(th && th.laneBottom || PLAY.colors.bottom);
+    return col(PLAY.colors.center);
+}
+
+// world y of a note whose chart time is t (scrolls top → bottom toward the line)
+const noteY = t => lerp(PLAY.topY, PLAY.lineY,
+    clamp(1 - (t - songTime) / PLAY.fallTime, 0, 1.3));
+
+const r3 = x => Math.round(x * 1000) / 1000;
 
 ///////////////////////////////////////////////////////////////////////////////
 // state machine
@@ -24,6 +74,10 @@ function setState(next) { pendingState = next; }
 
 function transitionTo(next)
 {
+    // make sure the song audio never outlives the play state
+    if (state == 'play' && next != 'play' && typeof ZZ != 'undefined' && ZZ.Audio)
+        ZZ.Audio.stop();
+
     engineObjectsDestroy();
     state = next;
     player = null;
@@ -112,10 +166,19 @@ function gameUpdate()
             setState('world');
         }
     }
+    else if (state == 'world')
+    {
+        // World state delegates ALL input/logic/rendering to overworld.js
+        // owUpdate(dt): called each frame, handles its own input
+        // owRender(): called each frame, handles its own rendering
+        // owHandleKey(key, down): optional direct key events from engine
+        if (typeof owUpdate == 'function') owUpdate(timeDelta);
+        if (typeof owRender == 'function') owRender();
+        owPollWorldKeys();
+    }
     else if (state == 'play')
     {
-        tapInput();
-        noteUpdate();
+        playUpdate();
     }
     else if (state == 'results')
     {
@@ -128,6 +191,25 @@ function gameUpdate()
     }
 
     updateCamera();
+}
+
+// optional key-event bridge for overworld.js: forwards edge transitions of the
+// common keys to owHandleKey(key, down) when overworld.js defines it.
+// Inert today — overworld objects poll keyIsDown/keyWasPressed themselves.
+const owKeyPrev = {};
+function owPollWorldKeys()
+{
+    if (typeof owHandleKey != 'function') return;
+    for (const k of ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',
+                     'Space','Enter','KeyW','KeyA','KeyS','KeyD'])
+    {
+        const down = keyIsDown(k);
+        if (down != (owKeyPrev[k] || false))
+        {
+            owKeyPrev[k] = down;
+            owHandleKey(k, down);
+        }
+    }
 }
 
 function gameUpdatePost()
@@ -198,110 +280,494 @@ function clampCamera(p)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// rhythm core — chart runner + judgment
+// rhythm core — chart building + the play state
+//
+// Chart JSON schema (v0):
+//   { format:'zigzag-level', version:0, title, artist, author, audio,
+//     bpm, offsetMs, difficulty, notes:[{t, lane, type, dur?, flicks?}], length }
+//   lane: 'top' | 'bottom' | 'center'   type: 'tap' | 'hold'
+//   t / flicks[] / dur are seconds from audio start (offset already applied)
 ///////////////////////////////////////////////////////////////////////////////
 
 function startSong()
 {
-    chart = makeChart();
-    notes = chart.notes.map(n=> new Note(n));
-    songStart = time + 1.2;
-    songTime = -1.2;
+    chart = buildPlayChart();
+    notes = chart.notes.map(n=> new PlayNote(n));
+
+    activeLane = 'bottom';
     score = 0; combo = 0; maxCombo = 0; hits = 0;
     counts = [0, 0, 0, 0];
     HUD.scoreShown = 0;
+    songMeta = { title: chart.title, artist: chart.artist };
+    playResult = null;
+    laneFlash.top = laneFlash.bottom = laneFlash.center = 0;
+    laneSwapPulse = 0;
+
+    // audio through the friend system's HTMLAudioElement wrapper (file:// safe)
+    audioArmed = false; audioStarted = false; audioFailed = false;
+    if (chart.song && typeof ZZ != 'undefined' && ZZ.Audio)
+    {
+        ZZ.Audio.unlock();
+        ZZ.Audio.load(chart.song, err=>
+        {
+            audioArmed = !err && state == 'play';
+            if (err) audioFailed = true;
+        });
+        ZZ.Audio.onEnded(()=> { if (state == 'play') endSong(); });
+    }
+
+    songStart = time + PLAY.countdown;
+    songTime = -PLAY.countdown;
 }
 
-function noteUpdate()
+// pick a song from ZZ.Songs, generate a friend chart and map it into the v0
+// two-lane schema; falls back to a built-in demo chart when nothing is loaded
+function buildPlayChart()
 {
-    if (state !== 'play' || !chart) return;
-    songTime = time - songStart;
+    const Z = typeof ZZ != 'undefined' ? ZZ : null;
+    const songs = Z && Z.Songs && Z.Songs.list || [];
+    const song = songs.find(s=> s.status != 'error') || null;
+    const bpm = song ? song.bpm : DATA.bpm;
+    const offset = song ? song.offset || 0 : 0;
 
-    for (const n of notes)
+    let raw = null;
+    if (song && Z.Chart && song.duration > 2)
     {
-        const t = clamp(1 - (n.time - songTime) / DATA.fallTime, 0, 1.2);
-        const y = lerp(DATA.topY, DATA.lineY, t);
-        const x = DATA.laneX[n.side];
-        n.drawPos = vec2(x, y);
-        if (!n.judged && n.time < songTime - DATA.judgments[2].window)
-        {
-            n.judged = true;
-            counts[3]++;
-            combo = 0;
-            flash = Math.max(flash, .25);
-            shake = Math.max(shake, .12);
-            hudJudge(DATA.judgments[3].name, DATA.c.judge[3]);
-        }
-        if (!n.drawn && t > 0 && t < 1)
-        {
-            n.drawn = true;
-            spawnBurst(x, y, DATA.c.lane[n.side]);
-        }
+        const diff = Z.Settings && Z.Settings.get ? Z.Settings.get('difficulty') : 'normal';
+        raw = Z.Chart.generate({ songId: song.id, bpm, duration: song.duration,
+            difficulty: Z.Chart.DIFFS[diff] ? diff : 'normal',
+            seed: (Z.Settings && Z.Settings.get ? Z.Settings.get('seed') : '') || 'zigzag',
+            offset });
     }
+
+    const mapped = (raw ? raw.notes.map(mapFriendNote) : makeDemoChart(bpm, offset).notes)
+        .filter(Boolean).sort((a, b)=> a.t - b.t);
+    const last = mapped[mapped.length - 1];
+    const length = last ? last.t + (last.dur || 0) + 1.5 : 24;
+
+    return {
+        format: 'zigzag-level', version: 0,
+        title:  song ? song.name  : 'Zigzag Etude',
+        artist: song ? 'ID ' + song.id : 'demo chart',
+        author: 'auto',
+        audio:  song ? song.url : '',
+        bpm, offsetMs: offset * 1000,
+        difficulty: 'NORMAL',
+        notes: mapped, length,
+        song,   // live ZZ.Songs entry (null => silent demo on the game clock)
+    };
+}
+
+// friend 4-lane chart note -> v0 note:
+//   lane 0/2 => bottom, lane 1/3 => top (the zigzag alternates sides)
+//   hold     => hold with a flick break in the middle when it's long
+//   drag     => CENTER hold; each node past the first becomes an UP flick
+function mapFriendNote(n)
+{
+    const lane = n.lane % 2 ? 'top' : 'bottom';
+    if (n.type == 'hold')
+    {
+        const dur = Math.max(.2, n.end - n.t);
+        return { t: r3(n.t), lane, type: 'hold', dur: r3(dur),
+            flicks: dur >= 1.4 ? [r3(n.t + dur*.5)] : [] };
+    }
+    if (n.type == 'drag')
+    {
+        const flicks = (n.nodes || []).slice(1).map(nd=> r3(nd.t));
+        return { t: r3(n.t), lane: 'center', type: 'hold',
+            dur: r3(Math.max(.2, n.end - n.t)), flicks };
+    }
+    return { t: r3(n.t), lane, type: 'tap' };
+}
+
+// built-in fallback chart (no usable song/generator): a short zigzag etude
+// with a couple of holds + flicks so every mechanic shows up
+function makeDemoChart(bpm, offset)
+{
+    const beat = 60 / bpm, notes = [];
+    let t = Math.max(offset, 0) + Math.ceil(2.0 / beat) * beat;
+    for (let i = 0; i < 40; ++i, t += beat*.5)
+    {
+        const lane = i % 4 == 3 ? 'center' : i % 2 ? 'top' : 'bottom';
+        if (i > 3 && i % 10 == 6)
+        {
+            const dur = beat*2;
+            notes.push({ t: r3(t), lane, type: 'hold', dur: r3(dur),
+                flicks: [r3(t + dur*.5)] });
+            t += dur;
+        }
+        else
+            notes.push({ t: r3(t), lane, type: 'tap' });
+    }
+    return { notes };
+}
+
+// per-frame play logic: lane swap, song clock, input, note bookkeeping
+function playUpdate()
+{
+    // ---- lane swap (DOWN) --------------------------------------------------
+    if (keyWasPressed('ArrowDown'))
+    {
+        activeLane = activeLane == 'bottom' ? 'top' : 'bottom';
+        laneSwapPulse = 1;
+        if (typeof ZZ != 'undefined' && ZZ.Audio) ZZ.Audio.sfx('tick');
+    }
+    laneSwapPulse = Math.max(0, laneSwapPulse - timeDelta*3);
+
+    songClock();
+    for (const k in laneFlash) laneFlash[k] = Math.max(0, laneFlash[k] - timeDelta*4);
+
+    // ---- taps & hold starts (LEFT / RIGHT) ---------------------------------
+    if (keyWasPressed('ArrowLeft') || keyWasPressed('ArrowRight'))
+        tryStartHit();
+
+    // ---- flicks (UP) during an active hold ---------------------------------
+    if (keyWasPressed('ArrowUp'))
+        tryFlick();
+
+    // ---- per-note bookkeeping (scroll, misses, hold progress) --------------
+    for (const n of notes) n.tick();
 
     if (songTime > chart.length) endSong();
 }
 
-function tapInput()
+// drive songTime: friend's audio element when ready, else the game clock
+function songClock()
 {
-    if (keyWasPressed('Space') || keyWasPressed('Enter') || keyWasPressed('NumpadEnter') ||
-        mouseWasPressed(0) || mouseWasPressed(2))
-        tap();
+    if (!audioStarted)
+    {
+        songTime = time - songStart;
+        if (songTime >= 0 && audioArmed && !audioFailed)
+        {
+            audioStarted = true;
+            const p = ZZ.Audio.play();
+            if (p && p.catch)
+                p.catch(()=> {                 // autoplay blocked — run silent
+                    audioFailed = true; audioStarted = false;
+                    songStart = time; songTime = 0;
+                });
+        }
+        else if (songTime > .6 && chart.song && !audioArmed)
+            audioFailed = true;                // audio never became ready — stay on the clock
+    }
+    else if (!audioFailed)
+        songTime = ZZ.Audio.now();
 }
 
-function tap()
+// a fresh LEFT/RIGHT press: hit the nearest pending TAP, or start a HOLD
+function tryStartHit()
 {
-    if (state !== 'play' || !chart) return;
-
-    let bestNote = null, bestDist = 1;
+    let target = null, bestDist = PLAY.hitWindow + 1e-4;
     for (const n of notes)
-        if (!n.judged)
-        {
-            const dist = Math.abs(n.time - songTime);
-            if (dist < bestDist) { bestDist = dist; bestNote = n; }
-        }
-    if (!bestNote) return;
+    {
+        if (n.state != 'pending') continue;
+        if (n.lane != 'center' && n.lane != activeLane) continue;
+        const d = Math.abs(n.t - songTime);
+        if (d < bestDist) { bestDist = d; target = n; }
+    }
+    if (!target) return;
 
-    bestNote.judged = true;
-    let i = DATA.judgments.length - 1;
-    for (let j = 0; j < DATA.judgments.length - 1; j++)
-        if (bestDist <= DATA.judgments[j].window) { i = j; break; }
-
-    const j = DATA.judgments[i];
-    score += j.score + combo * DATA.comboBonus;
-    combo++;
-    if (combo > maxCombo) maxCombo = combo;
-
-    if (j.name == 'MISS')
-        combo = 0;
+    if (target.type == 'tap')
+    {
+        target.state = 'done';
+        judgeUnit(judgmentIndex(bestDist), target);
+    }
     else
     {
-        hits++;
-        synthNote(DATA.penta[hits % 5]);
-        spawnBurst(bestNote.drawPos.x, bestNote.drawPos.y, DATA.c.lane[bestNote.side]);
+        target.state = 'holding';           // head judged now, tail over the next dur seconds
+        judgeUnit(judgmentIndex(bestDist), target);
     }
+}
 
-    counts[i]++;
-    flash = Math.max(flash, i === 0 ? .35 : .2);
-    shake = Math.max(shake, i === 0 ? .1 : .05);
-    judgeLinePulse = 1;
-    hudJudge(j.name, DATA.c.judge[i]);
-    if (combo > 1) hudCombo();
+// an UP press: satisfy the nearest pending flick on any active hold
+function tryFlick()
+{
+    for (const n of notes)
+        if (n.state == 'holding')
+            for (const f of n.flicks)
+                if (!f.done && Math.abs(f.t - songTime) <= PLAY.hitWindow)
+                {
+                    f.done = true;
+                    n.flickFlash = 1;
+                    judgeUnit(0, n);        // flicks are PERFECT-tier on the beat
+                    return;
+                }
+}
+
+// timing distance -> judgment index into DATA.judgments (0 perfect .. 2 good)
+function judgmentIndex(dist)
+{
+    for (let i = 0; i < DATA.judgments.length - 1; ++i)
+        if (dist <= DATA.judgments[i].window) return i;
+    return DATA.judgments.length - 2;
+}
+
+// shared judge: score, combo, HUD pops, bursts. q = 3 is MISS.
+// silent = count only (used for the leftover units of a broken hold)
+function judgeUnit(q, note, silent)
+{
+    const j = DATA.judgments[q];
+    counts[q]++;
+
+    if (q < DATA.judgments.length - 1)
+    {
+        score += j.score + combo * DATA.comboBonus;
+        combo++;
+        if (combo > maxCombo) maxCombo = combo;
+        hits++;
+        if (!silent)
+        {
+            synthNote(DATA.penta[hits % 5]);
+            hudJudge(j.name, DATA.c.judge[q]);
+            if (combo > 1) hudCombo();
+        }
+        if (note)
+        {
+            note.hitFlash = 1;
+            laneFlash[note.lane] = 1;
+            spawnBurst(note.pos.x, Math.max(note.pos.y, PLAY.lineY), playLaneColor(note.lane));
+        }
+        flash = Math.max(flash, q === 0 ? .35 : .2);
+        shake = Math.max(shake, q === 0 ? .1 : .05);
+        judgeLinePulse = 1;
+    }
+    else
+    {
+        combo = 0;
+        if (note)
+        {
+            note.missFlash = 1;
+            laneFlash[note.lane] = Math.max(laneFlash[note.lane], .5);
+            spawnBurst(note.pos.x, PLAY.lineY, col(PLAY.colors.miss));
+        }
+        flash = Math.max(flash, .25);
+        shake = Math.max(shake, .12);
+        if (!silent) hudJudge(j.name, DATA.c.judge[3]);
+    }
 }
 
 function endSong()
 {
-    if (state !== 'play') return;
+    if (state != 'play') return;
+    if (typeof ZZ != 'undefined' && ZZ.Audio) ZZ.Audio.stop();
+
+    const judged = counts[0] + counts[1] + counts[2] + counts[3];
+    const acc = judged ? (counts[0] + counts[1]*.75 + counts[2]*.4) / judged : 0;
+    playResult = {
+        title: songMeta.title, artist: songMeta.artist,
+        score, maxCombo, counts: counts.slice(), accuracy: acc,
+        grade: acc >= .95 ? 'S' : acc >= .9 ? 'A' : acc >= .8 ? 'B' : acc >= .7 ? 'C' : 'D',
+    };
+
     if (score > best)
     {
         best = score;
-        writeSaveData(SAVE_KEY, { best });
+        writeSaveData(SAVE_KEY, { best, lastRun: playResult });
     }
     setState('results');
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// the stage: backdrop, lanes, the zig-zag that ties the chart together
+// the play note — a tap tile or an elongated hold bar with flick arrows
+///////////////////////////////////////////////////////////////////////////////
+
+class PlayNote extends EngineObject
+{
+    constructor(n)
+    {
+        super(vec2(laneX(n.lane), PLAY.topY), vec2(2.2, 2.2), undefined, 0, WHITE, 10);
+        this.t = n.t;
+        this.lane = n.lane;                 // 'top' | 'bottom' | 'center'
+        this.type = n.type;                 // 'tap' | 'hold'
+        this.dur = n.dur || 0;
+        this.flicks = (n.flicks || []).map(t=> ({ t, done: false }));
+        this.state = 'pending';             // pending -> holding -> done | broken | missed
+        this.hitFlash = 0;                  // white pop after a hit
+        this.missFlash = 0;                 // red pop after a miss
+        this.flickFlash = 0;                // extra glow when a flick connects
+        this.mass = 0;
+    }
+
+    get endTime() { return this.t + this.dur; }
+
+    tick()
+    {
+        this.hitFlash = Math.max(0, this.hitFlash - timeDelta*4);
+        this.missFlash = Math.max(0, this.missFlash - timeDelta*3);
+        this.flickFlash = Math.max(0, this.flickFlash - timeDelta*5);
+
+        // scroll position — an active hold pins its head to the hit line
+        let y = noteY(this.t);
+        if (this.state == 'holding') y = Math.max(y, PLAY.lineY);
+        this.pos.x = laneX(this.lane);
+        this.pos.y = y;
+
+        if (this.state == 'pending')
+        {
+            // slid past the window with no press => miss
+            if (songTime > this.t + DATA.judgments[DATA.judgments.length - 2].window)
+            {
+                this.state = 'missed';
+                judgeUnit(3, this);
+            }
+            return;
+        }
+
+        if (this.state == 'holding')
+        {
+            // released early — everything left on the note counts as a miss
+            if (!keyIsDown('ArrowLeft') && !keyIsDown('ArrowRight'))
+            {
+                this.state = 'broken';
+                judgeUnit(3, this, false);                  // the head gap — shown
+                for (const f of this.flicks)
+                    if (!f.done)
+                    {
+                        f.done = true;
+                        judgeUnit(3, this, true);           // leftovers — count only
+                    }
+                return;
+            }
+
+            // flicks that slid by unanswered
+            for (const f of this.flicks)
+                if (!f.done && songTime > f.t + PLAY.hitWindow)
+                {
+                    f.done = true;
+                    judgeUnit(3, this);                     // shown: teaches the UP timing
+                }
+
+            if (songTime >= this.endTime)
+            {
+                this.state = 'done';
+                judgeUnit(1, this);                         // held to the end — GREAT
+            }
+        }
+    }
+
+    render()
+    {
+        if (state != 'play') return;
+        const gone = this.state == 'done' || this.state == 'broken' || this.state == 'missed';
+        if (gone && this.hitFlash <= .01 && this.missFlash <= .01) return;
+        if (this.state == 'pending' && this.t + this.dur - songTime > PLAY.fallTime + .1) return;
+
+        const C = DATA.c, x = this.pos.x;
+        const mine = this.lane == 'center' || this.lane == activeLane;
+        const base = playLaneColor(this.lane);
+        const dim = base.scale(.25);                        // dark when the lane is off
+        let c = mine ? base : dim;
+        if (gone) c = dim.scale(.7);
+        const w = 2.3;
+
+        if (this.type == 'tap')
+        {
+            const p = vec2(x, noteY(this.t));
+            const hot = clamp(1 - Math.abs(songTime - this.t)*2.2, 0, 1);
+
+            setAdditiveBlendMode(true);
+            drawRect(p, vec2(w + 1.4, 1.9), alpha(c, .07 + hot*.13));
+            setAdditiveBlendMode(false);
+
+            drawRect(p, vec2(w, 1.2), c);
+            drawRect(p.add(vec2(0, .34)), vec2(w*.86, .12), alpha(C.ink, .55));
+            drawRect(p.add(vec2(0, -.34)), vec2(w*.86, .08), alpha(C.bg, .6));
+            drawRect(p, vec2(.16, 1.2), alpha(C.bg, .7));
+
+            if (hot > .01)
+            {
+                setAdditiveBlendMode(true);
+                drawCircle(p, .45 + hot*.45, alpha(C.ink, .1*hot));
+                setAdditiveBlendMode(false);
+            }
+        }
+        else // hold: an elongated bar + head cap + ↑ flick arrows
+        {
+            const yHead = this.state == 'holding' ? Math.max(noteY(this.t), PLAY.lineY)
+                                                  : noteY(this.t);
+            const yTail = noteY(this.endTime);
+            const h = Math.max(.25, yHead - yTail);
+            const mid = vec2(x, (yHead + yTail) * .5);
+
+            // the bar
+            const barA = (mine ? .42 : .14) + (this.state == 'holding' ? .25 : 0);
+            drawRect(mid, vec2(1.15, h), alpha(c, barA));
+            drawRect(mid, vec2(.42, h), alpha(c, Math.min(1, barA + .3)));
+
+            // hold-active glow along the bar
+            if (this.state == 'holding')
+            {
+                setAdditiveBlendMode(true);
+                drawRect(mid, vec2(1.9, h), alpha(c, .1 + .05*sin(time*9)));
+                setAdditiveBlendMode(false);
+            }
+
+            // tail cap
+            drawRect(vec2(x, yTail), vec2(2.0, .5), c);
+            drawRect(vec2(x, yTail), vec2(.5, .5), alpha(C.bg, .5));
+
+            // flick arrows (↑) riding the bar
+            for (const f of this.flicks)
+            {
+                if (f.done) continue;
+                const p = vec2(x, noteY(f.t));
+                if (p.y > yHead + .3 || p.y < yTail - .3) continue;
+                const hot = clamp(1 - Math.abs(songTime - f.t)*2.2, 0, 1);
+                if (hot > .01)
+                {
+                    setAdditiveBlendMode(true);
+                    drawCircle(p, .5 + hot*.5, alpha(C.ink, .12*hot));
+                    setAdditiveBlendMode(false);
+                }
+                drawRegularPoly(p.add(vec2(0, .16)), vec2(.5 + hot*.1), 3,
+                    alpha(C.ink, .95), .04, alpha(C.bg, .8), PI/2);
+                drawRect(p.add(vec2(0, -.16)), vec2(.13, .34), alpha(C.ink, .9));
+            }
+
+            // head
+            if (this.state != 'holding')
+            {
+                drawRect(vec2(x, yHead), vec2(w, 1.2), c);
+                drawRect(vec2(x, yHead + .34), vec2(w*.86, .12), alpha(C.ink, .55));
+                drawRect(vec2(x, yHead - .34), vec2(w*.86, .08), alpha(C.bg, .6));
+            }
+            else
+            {
+                // held head pinned at the line, glowing brighter while held
+                setAdditiveBlendMode(true);
+                drawRect(vec2(x, PLAY.lineY), vec2(w + 1.2, 1.9), alpha(c, .14 + .06*sin(time*8)));
+                setAdditiveBlendMode(false);
+                drawRect(vec2(x, PLAY.lineY), vec2(w, 1.2), alpha(C.ink, .9));
+                drawRect(vec2(x, PLAY.lineY), vec2(w*.7, .9), c);
+            }
+        }
+
+        // hit = white flash, miss = red flash
+        const p = vec2(x, this.type == 'hold' && this.state == 'holding'
+            ? PLAY.lineY : noteY(this.t));
+        if (this.hitFlash > .01)
+        {
+            setAdditiveBlendMode(true);
+            drawRect(p, vec2(w + .8, 1.7), alpha(col('#ffffff'), this.hitFlash*.75));
+            setAdditiveBlendMode(false);
+        }
+        if (this.missFlash > .01)
+        {
+            setAdditiveBlendMode(true);
+            drawRect(p, vec2(w + .8, 1.7), alpha(col(PLAY.colors.miss), this.missFlash*.6));
+            setAdditiveBlendMode(false);
+        }
+        if (this.flickFlash > .01)
+        {
+            setAdditiveBlendMode(true);
+            drawCircle(p, .6 + this.flickFlash*.5, alpha(C.ink, .2*this.flickFlash));
+            setAdditiveBlendMode(false);
+        }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// the stage: backdrop, the two lane columns, the hit line, the countdown
 ///////////////////////////////////////////////////////////////////////////////
 
 function renderStage()
@@ -311,42 +777,76 @@ function renderStage()
     // backdrop
     drawRectGradient(vec2(S.x/2, S.y/2), S, C.bgTop, C.bgBot, 0, true, true);
 
-    // lane columns
-    for (let s = 0; s < 2; ++s)
+    const colH = PLAY.topY - PLAY.lineY + 5;
+    const colMid = (PLAY.topY + PLAY.lineY) * .5;
+
+    // ---- lane columns: bright when active, dark when not -------------------
+    for (const lane of ['bottom', 'top'])
     {
-        const x = DATA.laneX[s], c = C.lane[s];
-        drawRect(vec2(x, 1), vec2(5.4, DATA.topY - DATA.lineY + 5), alpha(c, .06));
-        drawLine(vec2(x, DATA.topY + 3), vec2(x, DATA.lineY - 2), .05, alpha(c, .2));
+        const x = laneX(lane), on = activeLane == lane;
+        const base = playLaneColor(lane);
+        const fl = laneFlash[lane];
+
+        // column bed
+        drawRect(vec2(x, colMid), vec2(PLAY.laneWidth, colH),
+            alpha(base, (on ? .085 : .03) + fl*.1));
+
+        // edge rails
+        for (const s of [-1, 1])
+            drawRect(vec2(x + s*PLAY.laneWidth*.5, colMid), vec2(.07, colH),
+                alpha(base, on ? .45 : .14));
+
+        // active-column glow at the hit zone
+        if (on)
+        {
+            setAdditiveBlendMode(true);
+            drawRect(vec2(x, PLAY.lineY + 1.4),
+                vec2(PLAY.laneWidth, 3.4 + laneSwapPulse*.7),
+                alpha(base, .06 + .035*sin(time*3) + fl*.22 + laneSwapPulse*.1));
+            setAdditiveBlendMode(false);
+        }
     }
 
-    // the literal zig-zag: the next notes, chained
-    const upcoming = [];
-    for (const n of notes)
-        if (!n.judged && n.drawPos && upcoming.length < 8) upcoming.push(n);
-    if (upcoming.length > 1)
-    {
-        const pts = upcoming.map(n=> n.drawPos);
-        drawLineList(pts, .16, alpha(C.neon, .14));
-        drawLineList(pts, .06, alpha(C.ink, .3));
-        for (const n of upcoming) drawCircle(n.drawPos, .1, alpha(C.ink, .5));
-    }
+    // faint centre column (CENTER notes live here; either lane can hit them)
+    drawRect(vec2(0, colMid), vec2(2.0, colH), alpha(playLaneColor('center'), .035));
 
-    // judge line
+    // ---- the hit line ------------------------------------------------------
     const p = judgeLinePulse, w = 11.5;
-    drawRect(vec2(0, DATA.lineY), vec2(w, .5 + p*.25), alpha(C.neon, .1 + p*.2));
-    drawRect(vec2(0, DATA.lineY), vec2(w, .16), alpha(C.ink, .55 + p*.45));
-    drawRect(vec2(0, DATA.lineY), vec2(w, .05), C.ink);
+    drawRect(vec2(0, PLAY.lineY), vec2(w, .5 + p*.25), alpha(C.neon, .1 + p*.2));
+    drawRect(vec2(0, PLAY.lineY), vec2(w, .16), alpha(C.ink, .55 + p*.45));
+    drawRect(vec2(0, PLAY.lineY), vec2(w, .05), C.ink);
     for (const s of [-1, 1])
-        drawRegularPoly(vec2(s*(w/2 - .2), DATA.lineY), vec2(.8 + p*.25), 4,
+        drawRegularPoly(vec2(s*(w/2 - .2), PLAY.lineY), vec2(.8 + p*.25), 4,
             alpha(C.neon, .9), .07, C.ink, PI/4);
+
+    // ---- key hints under the line -----------------------------------------
+    for (const lane of ['bottom', 'top'])
+    {
+        const on = activeLane == lane, base = playLaneColor(lane);
+        drawText(lane == 'top' ? 'TOP' : 'BOT', vec2(laneX(lane), PLAY.lineY - 1.2),
+            .5, alpha(base, on ? .95 : .4), .04, alpha(C.bg, .85), 'center', DATA.ui.font);
+        drawText('L R', vec2(laneX(lane), PLAY.lineY - 1.9), .36,
+            alpha(C.dim, on ? .8 : .35), 0, 0, 'center', DATA.ui.soft);
+    }
+    drawText('↓ SWAP', vec2(0, PLAY.lineY - 1.2), .42,
+        alpha(C.ink, .5 + laneSwapPulse*.45), .03, alpha(C.bg, .85), 'center', DATA.ui.font);
+    drawText('↑ FLICK', vec2(0, PLAY.lineY - 1.9), .32,
+        alpha(C.dim, .65), 0, 0, 'center', DATA.ui.soft);
+
+    // song title chip while the chart warms up
+    if (songMeta.title && songTime < 2.6)
+        drawText(songMeta.title, vec2(0, 3.4), .85,
+            alpha(C.ink, clamp(1.1 - Math.max(0, songTime)*.35)), .05, alpha(C.bg, .8),
+            'center', DATA.ui.font);
 
     // countdown before the chart starts
     if (songTime < 1.1)
     {
         const k = Math.ceil(-songTime + .2);
-        const label = k > 0 ? String(Math.min(k, 3)) : 'GO!';
+        const label = k > 0 ? String(Math.min(k, Math.ceil(PLAY.countdown))) : 'GO!';
         const pop = 1 - mod(-songTime + .2, 1);
-        drawText(label, vec2(0, 1.2), 1.6 + pop*.6, alpha(C.ink, .9), .1, C.bg);
+        drawText(label, vec2(0, 1.2), 1.6 + pop*.6, alpha(C.ink, .9), .1, C.bg,
+            'center', DATA.ui.font);
     }
 }
 
@@ -357,43 +857,6 @@ function spawnBurst(x, y, color)
         color, DATA.c.ink, alpha(color, 0), alpha(DATA.c.ink, 0),
         .5, .16, .03, .05, .04, .9, 1, 0, PI, .3, .5, false, true);
     new HitRing(vec2(x, y), color);
-}
-
-class Note extends EngineObject
-{
-    constructor(n)
-    {
-        super(vec2(DATA.laneX[n.side], DATA.topY), vec2(2.4, 2.4), undefined, 0, WHITE, 0);
-        this.time = n.time;
-        this.side = n.side;
-        this.drawn = false;
-        this.judged = false;
-        this.drawPos = vec2();
-        this.mass = 0;
-    }
-
-    render()
-    {
-        if (state !== 'play' || !this.drawPos) return;
-        const C = DATA.c, c = C.lane[this.side], p = this.drawPos;
-        const hot = clamp(1 - Math.abs(songTime - this.time)*3, 0, 1);
-
-        setAdditiveBlendMode(true);
-        drawRect(p, vec2(3.4, 1.9), alpha(c, .1 + hot*.14));
-        setAdditiveBlendMode(false);
-
-        drawRegularPoly(p, vec2(2.3, 1.15), 6, alpha(c, .95), .08, alpha(C.bg, .9));
-        drawRect(p.add(vec2(0, .34)), vec2(2.0, .14), alpha(C.ink, .75));
-        drawRect(p.add(vec2(0, -.34)), vec2(2.0, .14), alpha(C.ink, .25));
-        drawRect(p, vec2(.2, 1.15), alpha(C.ink, .95));
-
-        if (hot > .01)
-        {
-            setAdditiveBlendMode(true);
-            drawCircle(p, .5 + hot*.5, alpha(C.ink, .12*hot));
-            setAdditiveBlendMode(false);
-        }
-    }
 }
 
 class HitRing extends EngineObject
