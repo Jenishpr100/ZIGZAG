@@ -9,11 +9,9 @@
 </style>
 </head>
 <body>
-<!-- Engine: dev path from `npm install littlejsengine`.
-     FOR THE ITCH UPLOAD: copy
-       node_modules/littlejsengine/dist/littlejs.min.js
-     next to index.html and change this src to "littlejs.min.js" -->
-<script src="node_modules/littlejsengine/dist/littlejs.js"></script>
+<!-- Engine ships with the repo (GitHub Pages can't see node_modules).
+     Dev alternative: node_modules/littlejsengine/dist/littlejs.js (has debug asserts) -->
+<script src="littlejs.min.js"></script>
 <script src="js/data.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/main.js"></script>
