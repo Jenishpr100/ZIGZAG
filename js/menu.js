@@ -20,7 +20,7 @@
     init() {
       buildLogo(); buildSegments(); bindNav(); bindSongs(); bindSettings(); bindOverlays();
       const last = Z.Songs.byId(S().lastSong); selected = last || Z.Songs.list[0] || null;
-      syncAll(); M.go('menu');
+      syncAll(); if (Z.Dev && Z.Dev.isUnlocked()) showDevEditButton(); M.go('menu');
     },
     refreshAfterSongReload() { selected = Z.Songs.byId(S().lastSong) || Z.Songs.list[0] || null; renderSongs(); updatePlaySub(); }
   };
@@ -155,6 +155,44 @@
     $$('.seed-input').forEach(inp => inp.addEventListener('input', () => { set('seed', inp.value.trim() || 'zigzag'); syncAll(inp); }));
     $$('.seed-rand').forEach(b => b.addEventListener('click', () => { set('seed', Z.Chart.randomSeed()); syncAll(); }));
     $('#btn-reset').addEventListener('click', () => { Z.Settings.reset(); syncAll(); });
+    bindDevUnlock();
+  }
+
+  /* ---------- hidden Developer unlock (Expert button x5) + DevLevelEdit menu entry ---------- */
+  function toast(msg) {
+    let t = $('#dev-toast');
+    if (!t) {
+      t = document.createElement('div'); t.id = 'dev-toast'; t.setAttribute('role', 'status');
+      t.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#15151c;color:#fff;' +
+        'padding:10px 20px;border-radius:8px;border:1px solid #444;box-shadow:0 4px 18px rgba(0,0,0,.5);' +
+        'font:600 14px/1.3 system-ui,sans-serif;z-index:10000;pointer-events:none;transition:opacity .4s;opacity:0';
+      document.body.appendChild(t);
+    }
+    t.textContent = msg; t.style.opacity = '1';
+    clearTimeout(toast._h); toast._h = setTimeout(() => { t.style.opacity = '0'; }, 2200);
+  }
+  function bindDevUnlock() {
+    const panel = $('#s-settings .panel.form'); if (!panel) return;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn mini'; b.id = 'btn-expert';
+    b.setAttribute('aria-label', 'Expert');
+    const sync = () => { b.textContent = Z.Dev.isUnlocked() ? 'Developer: ON' : 'Expert'; };
+    sync();
+    b.addEventListener('click', () => {
+      Z.Audio.unlock(); Z.Audio.sfx('ui');
+      if (Z.Dev.isUnlocked()) { toast('Developer mode is already unlocked.'); return; }
+      if (Z.Dev.tap()) { toast('You are now a Developer'); sync(); showDevEditButton(); }
+      else toast('Expert ' + Z.Dev.taps + '/5');
+    });
+    panel.appendChild(b);
+  }
+  function showDevEditButton() {
+    if ($('#btn-devedit')) return;
+    const nav = $('#s-menu nav') || $('#s-menu .stack') || $('#s-menu'); if (!nav) return;
+    const b = document.createElement('button');
+    b.className = 'btn'; b.id = 'btn-devedit'; b.textContent = 'DevLevelEdit';
+    b.addEventListener('click', () => { window.location.href = 'DevEdit.html'; });
+    nav.appendChild(b);
   }
   function syncAll(skip) {
     const s = S();

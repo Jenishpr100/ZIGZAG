@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZIGZAG Level Editor (DevEdit)</title>
+<style>
+  :root { --bg:#0d0d12; --panel:#15151c; --line:#2a2a36; --text:#e8e8f0; --dim:#8a8a99; --accent:#7c5cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui,sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 12px 0 0; letter-spacing:1px; }
+  label { color:var(--dim); font-size:12px; display:flex; gap:5px; align-items:center; }
+  select, input { background:#0a0a10; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; }
+  input[type=number] { width:80px; }
+  input[type=text] { width:150px; }
+  button { background:#22222e; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.rec-on { background:#c0392b; border-color:#c0392b; color:#fff; }
+  #meta { display:flex; flex-wrap:wrap; gap:10px; padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--line); align-items:center; }
+  #tlwrap { position:relative; padding:8px 14px; }
+  #tl { display:block; width:100%; height:220px; background:#0a0a10; border:1px solid var(--line); border-radius:8px; cursor:crosshair; }
+  #transport { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:8px 14px; }
+  #stats { color:var(--dim); display:flex; gap:18px; padding:0 14px 4px; }
+  #actions { display:flex; flex-wrap:wrap; gap:10px; padding:8px 14px 20px; }
+  #help { color:var(--dim); font-size:12px; padding:0 14px 20px; max-width:900px; }
+  #help kbd { background:#22222e; border:1px solid var(--line); border-radius:4px; padding:0 5px; }
+  #hold-banner { position:absolute; top:16px; left:50%; transform:translateX(-50%); background:#c0392b; color:#fff; padding:4px 14px; border-radius:6px; font-weight:700; display:none; }
+  #toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:#15151c; color:#fff; border:1px solid #444; border-radius:8px; padding:10px 20px; box-shadow:0 4px 18px rgba(0,0,0,.5); opacity:0; transition:opacity .4s; pointer-events:none; z-index:99; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ZIGZAG Level Editor</h1>
+  <label>Song <select id="song"></select></label>
+  <label>Difficulty <select id="diff">
+    <option>EASY</option><option>NORMAL</option><option>HARD</option><option>EXPERT</option>
+  </select></label>
+  <button id="btn-start" class="primary">Start Mapping</button>
+</header>
+
+<div id="meta">
+  <label>Title <input id="m-title" type="text"></label>
+  <label>Artist <input id="m-artist" type="text"></label>
+  <label>Author <input id="m-author" type="text"></label>
+  <label>BPM <input id="m-bpm" type="number" min="30" max="400" step="0.1"></label>
+  <label>Offset ms <input id="m-offset" type="number" step="5"></label>
+  <label>Seed <input id="m-seed" type="text" value="zigzag"></label>
+  <button id="btn-seed" title="Generate a seeded chart for this song/difficulty as a starting point">Load Seed Chart</button>
+</div>
+
+<div id="tlwrap">
+  <canvas id="tl"></canvas>
+  <div id="hold-banner">HOLD ACTIVE — Up = flick · Left/Right/Down = lane · Enter = end hold</div>
+</div>
+
+<div id="transport">
+  <button id="btn-play">▶ Play/Pause</button>
+  <button id="btn-rec">⏺ Record</button>
+  <span id="time">Time: 0.0s</span>
+  <span id="mode" style="color:var(--dim)">Mode: idle</span>
+</div>
+
+<div id="stats">
+  <span id="st-notes">Notes: 0</span>
+  <span id="st-bpm">BPM: 120</span>
+  <span id="st-offset">Offset: 0ms</span>
+  <span id="st-zoom">Zoom: 60 px/s</span>
+</div>
+
+<div id="actions">
+  <button id="btn-save" class="primary">Save</button>
+  <button id="btn-export">Export JSON</button>
+  <button id="btn-load">Load…</button>
+  <button id="btn-clear">Clear</button>
+  <input type="file" id="file-json" accept=".json,application/json" hidden>
+</div>
+
+<div id="help">
+  Map a chart by pretending to play the song. <b>Left arrow</b> = bottom note · <b>Right arrow</b> = top note · <b>Down arrow</b> = center note ·
+  <b>Up arrow</b> = start hold (again = flick, Left/Right/Down = hold lane, <kbd>Enter</kbd> = end hold) ·
+  <kbd>Space</kbd> play/pause · <kbd>Delete</kbd> remove selected · <kbd>Esc</kbd> stop → review mode · <kbd>Ctrl+S</kbd> save · <kbd>Ctrl+E</kbd> export ·
+  <kbd>+</kbd>/<kbd>−</kbd> or mouse wheel = zoom · Shift+wheel or drag background = pan · drag a note to retime · drag a hold's end to resize.
+</div>
+
+<div id="toast" role="status"></div>
+
+<!-- Manifest + shared modules. levelFormat.js must load before songs.js (custom level list). -->
+<script src="songs/songs.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/levelFormat.js"></script>
+<script src="js/songs.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/chart-generator.js"></script>
+<script>
+/* DevEdit.html — play-to-map level editor. Standalone DOM/canvas2D page, no LittleJS.
+   Audio clock comes from Z.Audio.now() (same extrapolated clock the game uses).
+   Level data lives in a LevelFormat v0 object; notes are placed at real playback time. */
+(function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const DIFFS = LevelFormat.DIFF_KEYS;
+  const LANE_ROW = { top: 0, center: 1, bottom: 2 };
+  const LANE_COLOR = { top: '#ff9d45', bottom: '#4da6ff', center: '#f2f2f2' };
+
+  let level = null;              // LevelFormat v0 object being edited
+  let currentSong = null;        // Z.Songs entry (built-in or custom)
+  let songDur = 0;
+  let mode = 'idle';             // idle | map | review
+  let recording = true;
+  let activeHold = null;         // hold note currently being extended (map mode)
+  let selected = null;           // selected note object (in current difficulty)
+  let zoom = 60;                 // px per second
+  let scrollT = 0;               // time (s) at the left edge of the canvas
+  let drag = null;               // { note, mode:'move'|'end', grabOff }
+  let panning = false, panX = 0, panT = 0;
+
+  /* ---------- toast ---------- */
+  let toastTimer = 0;
+  function toast(msg, ms) {
+    const t = $('toast'); t.textContent = msg; t.style.opacity = '1';
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = '0'; }, ms || 2400);
+  }
+
+  /* ---------- level helpers ---------- */
+  const notes = () => level.difficulties[$('diff').value].notes;
+  const r3 = x => Math.round(x * 1000) / 1000;
+  function resort() { notes().sort((a, b) => a.t - b.t); }
+  function syncMetaFromInputs() {
+    level.title = $('m-title').value.trim() || 'Untitled';
+    level.artist = $('m-artist').value;
+    level.author = $('m-author').value;
+    level.bpm = Math.max(30, Math.min(400, parseFloat($('m-bpm').value) || 120));
+    level.offsetMs = parseInt($('m-offset').value, 10) || 0;
+    level.audio = currentSong ? currentSong.url : level.audio;
+    $('st-bpm').textContent = 'BPM: ' + level.bpm;
+    $('st-offset').textContent = 'Offset: ' + level.offsetMs + 'ms';
+  }
+  function syncInputsFromLevel() {
+    $('m-title').value = level.title || '';
+    $('m-artist').value = level.artist || '';
+    $('m-author').value = level.author || '';
+    $('m-bpm').value = level.bpm;
+    $('m-offset').value = level.offsetMs;
+    $('st-bpm').textContent = 'BPM: ' + level.bpm;
+    $('st-offset').textContent = 'Offset: ' + level.offsetMs + 'ms';
+  }
+  function newLevelFor(song) {
+    const bpm = song.bpm || 120, off = Math.round((song.offset || 0) * 1000);
+    const lv = LevelFormat.createBlank(song.name.replace(/^\u2605\s*/, ''), '', song.url, bpm, off);
+    return lv;
+  }
+
+  /* ---------- song dropdown ---------- */
+  function fillSongs() {
+    const sel = $('song'); sel.textContent = '';
+    const ph = document.createElement('option'); ph.value = ''; ph.textContent = '— pick a song —';
+    sel.appendChild(ph);
+    Z.Songs.list.forEach(s => {
+      const o = document.createElement('option');
+      o.value = String(s.id);
+      o.textContent = (s.custom ? '★ CUSTOM · ' : '#' + s.id + ' · ') + s.name.replace(/^\u2605\s*/, '');
+      sel.appendChild(o);
+    });
+  }
+  function onSongChange() {
+    const id = $('song').value;
+    currentSong = Z.Songs.list.find(s => String(s.id) === id) || null;
+    endHold(false);
+    selected = null;
+    if (currentSong && currentSong.custom) {
+      const full = LevelFormat.load(currentSong.levelSlug);
+      if (full) { level = full; syncInputsFromLevel(); toast('Loaded custom level "' + level.title + '"'); }
+      else { level = newLevelFor(currentSong); syncInputsFromLevel(); }
+    } else if (currentSong) {
+      level = newLevelFor(currentSong); syncInputsFromLevel();
+    } else {
+      level = LevelFormat.createBlank('Untitled', '', '', 120, 0); syncInputsFromLevel();
+    }
+    songDur = currentSong && currentSong.status === 'ok' ? currentSong.duration : 0;
+    updateStats();
+  }
+
+  /* ---------- playback ---------- */
+  const now = () => Z.Audio.now();
+  function startMapping() {
+    if (!currentSong) { toast('Pick a song first.'); return; }
+    syncMetaFromInputs();
+    Z.Audio.unlock();
+    const go = () => {
+      Z.Audio.load(currentSong, err => {
+        if (err) { toast(err, 4000); return; }
+        Z.Audio.seek(0); scrollT = 0;
+        Z.Audio.onEnded(onSongEnded);
+        Z.Audio.play().then(() => {
+          mode = 'map'; recording = true;
+          $('btn-rec').classList.add('rec-on');
+          toast('Mapping — arrow keys place notes at the playhead.');
+        }).catch(() => toast('Browser blocked audio — press Play.', 3000));
+      });
+    };
+    if (currentSong.status === 'ok') { songDur = currentSong.duration; go(); }
+    else Z.Audio.probe(currentSong, (e, d) => { if (e) { toast(e, 4000); return; } songDur = d; go(); });
+  }
+  function togglePlay() {
+    if (!currentSong) { toast('Pick a song first.'); return; }
+    if (Z.Audio.isPlaying()) { Z.Audio.pause(); if (mode === 'map') finishOpenHold(); }
+    else {
+      Z.Audio.unlock();
+      if (!Z.Audio.isPlaying() && mode === 'idle') { startMapping(); return; }
+      Z.Audio.play().catch(() => toast('Browser blocked audio — click again.', 3000));
+      if (mode === 'idle') mode = 'review';
+    }
+  }
+  function stopToReview() {
+    finishOpenHold();
+    Z.Audio.stop(); mode = 'review';
+    updateMode();
+  }
+  function onSongEnded() {
+    finishOpenHold();
+    mode = 'review'; recording = false;
+    $('btn-rec').classList.remove('rec-on');
+    updateMode();
+    toast('Song ended — review mode. Scroll, edit, then Save.');
+  }
+
+  /* ---------- note placement ---------- */
+  function placeTap(lane) {
+    if (mode !== 'map' || !Z.Audio.isPlaying()) return;
+    const n = { t: r3(now()), lane, type: 'tap' };
+    notes().push(n); selected = n; resort(); updateStats();
+  }
+  function startHold() {
+    if (mode !== 'map' || !Z.Audio.isPlaying()) return;
+    if (activeHold) { placeFlick(); return; }
+    activeHold = { t: r3(now()), lane: 'center', type: 'hold', dur: 0.1, flicks: [] };
+    notes().push(activeHold); selected = activeHold; updateStats();
+    $('hold-banner').style.display = 'block';
+  }
+  function placeFlick() {
+    if (!activeHold) return;
+    const t = now();
+    if (t > activeHold.t + 0.02) activeHold.flicks.push(r3(t));
+  }
+  function setHoldLane(lane) { if (activeHold) activeHold.lane = lane; }
+  function endHold() { finishOpenHold(); }
+  function finishOpenHold() {
+    if (!activeHold) return;
+    const dur = now() - activeHold.t;
+    if (dur < 0.05) {                                   // too short to be a hold — keep as tap
+      const i = notes().indexOf(activeHold);
+      if (i >= 0) notes().splice(i, 1);
+      if (selected === activeHold) selected = null;
+    } else {
+      activeHold.dur = r3(Math.max(0.1, dur));
+      activeHold.flicks = activeHold.flicks.filter(f => f > activeHold.t && f <= activeHold.t + activeHold.dur).map(r3);
+    }
+    activeHold = null;
+    $('hold-banner').style.display = 'none';
+    resort(); updateStats();
+  }
+  function deleteSelected() {
+    if (!selected) return;
+    if (selected === activeHold) { activeHold = null; $('hold-banner').style.display = 'none'; }
+    const i = notes().indexOf(selected);
+    if (i >= 0) notes().splice(i, 1);
+    selected = null; updateStats();
+  }
+
+  /* ---------- actions ---------- */
+  function saveLevel() {
+    finishOpenHold(); syncMetaFromInputs(); resort();
+    const res = LevelFormat.save(level);
+    if (res.saved) toast('Saved "' + level.title + '" (' + res.slug + ')');
+    else toast('Not saved: ' + res.errors[0], 4000);
+  }
+  function exportJSON() {
+    finishOpenHold(); syncMetaFromInputs(); resort();
+    const v = LevelFormat.validate(level);
+    if (!v.valid) toast('Exporting anyway — ' + v.errors[0], 3500);
+    const blob = new Blob([LevelFormat.toJSON(level)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = LevelFormat.slug(level.title) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Exported ' + a.download);
+  }
+  function importJSONFile(file) {
+    const r = new FileReader();
+    r.onload = () => {
+      const res = LevelFormat.fromJSON(String(r.result));
+      if (!res.valid) { toast('Invalid level: ' + res.errors[0], 4500); return; }
+      level = res.level; syncInputsFromLevel(); selected = null; updateStats();
+      toast('Imported "' + level.title + '"');
+    };
+    r.readAsText(file);
+  }
+  function clearDiff() {
+    if (!confirm('Clear all notes on ' + $('diff').value + '?')) return;
+    finishOpenHold();
+    level.difficulties[$('diff').value].notes = [];
+    selected = null; updateStats();
+  }
+  function loadSeedChart() {
+    if (!currentSong) { toast('Pick a song first.'); return; }
+    if (currentSong.custom) { toast('Seed charts are for built-in songs — custom levels keep their own notes.'); return; }
+    const diff = $('diff').value.toLowerCase();
+    if (!confirm('Replace ' + $('diff').value + ' notes with a generated chart (seed "' + ($('m-seed').value || 'zigzag') + '")?')) return;
+    const gen = () => {
+      const chart = Z.Chart.generate({
+        songId: currentSong.id, bpm: parseFloat($('m-bpm').value) || currentSong.bpm,
+        duration: songDur, difficulty: diff, seed: $('m-seed').value || 'zigzag', offset: 0
+      });
+      const src = window.LevelFormat.fromGeneratedChart(chart, level.title, level.artist, level.audio, level.bpm, level.offsetMs);
+      level.difficulties[$('diff').value].notes = src.difficulties[$('diff').value].notes;
+      selected = null; resort(); updateStats();
+      toast('Seed chart loaded — ' + notes().length + ' notes. Tweak, then Save.');
+    };
+    if (songDur) gen();
+    else Z.Audio.probe(currentSong, (e, d) => { if (e) { toast(e, 4000); return; } songDur = d; gen(); });
+  }
+
+  /* ---------- canvas ---------- */
+  const cv = $('tl'), c2 = cv.getContext('2d');
+  function fitCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    }
+    c2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { w, h };
+  }
+  const t2x = (t, w) => (t - scrollT) * zoom;
+  const x2t = x => scrollT + x / zoom;
+  const laneY = (row, h) => (h / 3) * (row + 0.5);
+  const maxScroll = w => Math.max(0, (maxTime() + 4) - w / zoom);
+  function maxTime() {
+    let m = songDur || 0;
+    DIFFS.forEach(d => (level.difficulties[d].notes || []).forEach(n => { m = Math.max(m, n.t + (n.dur || 0)); }));
+    return m;
+  }
+  function draw() {
+    const { w, h } = fitCanvas();
+    c2.clearRect(0, 0, w, h);
+    const bpm = level.bpm || 120, beat = 60 / bpm;
+
+    // lane rows
+    const rows = ['TOP', 'CENTER', 'BOTTOM'];
+    for (let r = 0; r < 3; r++) {
+      c2.fillStyle = r % 2 ? '#0e0e15' : '#0a0a10';
+      c2.fillRect(0, (h / 3) * r, w, h / 3);
+      c2.fillStyle = '#3a3a48'; c2.font = '10px system-ui';
+      c2.fillText(rows[r], 6, (h / 3) * r + 12);
+    }
+    // beat grid + second labels
+    const firstBeat = Math.floor(scrollT / beat) * beat;
+    for (let t = firstBeat; t < scrollT + w / zoom + beat; t += beat) {
+      const x = t2x(t, w); if (x < -2) continue;
+      const bar = Math.round(t / beat) % 4 === 0;
+      c2.strokeStyle = bar ? '#262633' : '#17171f';
+      c2.beginPath(); c2.moveTo(x, 0); c2.lineTo(x, h); c2.stroke();
+    }
+    const step = zoom >= 50 ? 1 : zoom >= 20 ? 5 : 10;
+    c2.fillStyle = '#4a4a58'; c2.font = '10px system-ui';
+    for (let s = Math.ceil(scrollT / step) * step; s < scrollT + w / zoom; s += step) {
+      const x = t2x(s, w); if (x < 0) continue;
+      c2.fillText(s + 's', x + 2, h - 4);
+    }
+
+    // notes of the current difficulty
+    notes().forEach(n => {
+      const row = LANE_ROW[n.lane], y = laneY(row, h);
+      const x = t2x(n.t, w);
+      const col = LANE_COLOR[n.lane];
+      if (n.type === 'hold' && n.dur) {
+        const x2 = t2x(n.t + n.dur, w);
+        c2.fillStyle = col; c2.globalAlpha = n === selected || n === activeHold ? .9 : .55;
+        c2.fillRect(x, y - 6, Math.max(3, x2 - x), 12);
+        c2.globalAlpha = 1;
+        c2.beginPath(); c2.arc(x, y, 6, 0, 7); c2.fillStyle = col; c2.fill();     // head
+        c2.beginPath(); c2.arc(x2, y, 4, 0, 7); c2.fill();                        // tail
+        (n.flicks || []).forEach(f => {                                           // flick arrows
+          const fx = t2x(f, w);
+          c2.fillStyle = '#ffe14d';
+          c2.beginPath(); c2.moveTo(fx, y - 9); c2.lineTo(fx - 5, y - 17); c2.lineTo(fx + 5, y - 17); c2.closePath(); c2.fill();
+        });
+      } else {
+        c2.beginPath(); c2.arc(x, y, 6, 0, 7); c2.fillStyle = col; c2.fill();
+      }
+      if (n === selected) {
+        c2.strokeStyle = '#7c5cff'; c2.lineWidth = 2;
+        c2.strokeRect(x - 10, y - 12, (n.type === 'hold' && n.dur ? Math.max(20, t2x(n.t + n.dur, w) - x) : 0) + 20, 24);
+        c2.lineWidth = 1;
+      }
+    });
+
+    // live hold preview duration
+    if (activeHold) {
+      const y = laneY(LANE_ROW[activeHold.lane], h);
+      const x = t2x(activeHold.t, w), x2 = t2x(Math.max(activeHold.t + 0.1, now()), w);
+      c2.strokeStyle = '#c0392b'; c2.lineWidth = 3;
+      c2.strokeRect(x, y - 6, Math.max(3, x2 - x), 12);
+      c2.lineWidth = 1;
+    }
+
+    // playhead
+    if (mode !== 'idle') {
+      const px = t2x(now(), w);
+      if (px >= 0 && px <= w) {
+        c2.strokeStyle = '#ff4d6a'; c2.lineWidth = 2;
+        c2.beginPath(); c2.moveTo(px, 0); c2.lineTo(px, h); c2.stroke();
+        c2.lineWidth = 1;
+      }
+    }
+  }
+
+  /* ---------- interaction ---------- */
+  function noteAt(x, y) {
+    const { h } = fitCanvas();
+    const list = notes();
+    for (let i = list.length - 1; i >= 0; i--) {
+      const n = list[i], nx = t2x(n.t, w0()), ny = laneY(LANE_ROW[n.lane], h);
+      if (n.type === 'hold' && n.dur) {
+        const nx2 = t2x(n.t + n.dur, w0());
+        if (x >= nx - 8 && x <= nx2 + 8 && Math.abs(y - ny) <= 12) return { note: n, end: Math.abs(x - nx2) < 10 && Math.abs(x - nx) > 10 };
+      } else if (Math.abs(x - nx) <= 10 && Math.abs(y - ny) <= 12) {
+        return { note: n, end: false };
+      }
+    }
+    return null;
+  }
+  const w0 = () => cv.clientWidth;
+  cv.addEventListener('mousedown', e => {
+    const rect = cv.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    const hit = noteAt(x, y);
+    if (hit) {
+      selected = hit.note;
+      drag = { note: hit.note, mode: hit.end ? 'end' : 'move', grabOff: x2t(x) - hit.note.t };
+    } else {
+      selected = null;
+      panning = true; panX = e.clientX; panT = scrollT;
+    }
+  });
+  window.addEventListener('mousemove', e => {
+    const rect = cv.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    if (drag) {
+      const n = drag.note, t = Math.max(0, x2t(x) - (drag.mode === 'move' ? drag.grabOff : 0));
+      if (drag.mode === 'move' && n !== activeHold) {
+        const delta = r3(t) - n.t;
+        n.t = r3(Math.max(0, t));
+        if (n.flicks) n.flicks = n.flicks.map(f => r3(f + delta));
+        resort();
+      } else if (drag.mode === 'end' && n.type === 'hold') {
+        n.dur = r3(Math.max(0.1, t - n.t));
+        n.flicks = (n.flicks || []).filter(f => f <= n.t + n.dur);
+      }
+    } else if (panning) {
+      scrollT = Math.max(0, Math.min(maxScroll(w0()), panT - (e.clientX - panX) / zoom));
+    }
+  });
+  window.addEventListener('mouseup', () => { drag = null; panning = false; });
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rect = cv.getBoundingClientRect();
+    if (e.shiftKey) {
+      scrollT = Math.max(0, Math.min(maxScroll(w0()), scrollT + (e.deltaY || e.deltaX) / zoom));
+    } else {
+      const mx = e.clientX - rect.left, tAt = x2t(mx);
+      zoom = Math.max(8, Math.min(400, zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      scrollT = Math.max(0, tAt - mx / zoom);
+      $('st-zoom').textContent = 'Zoom: ' + Math.round(zoom) + ' px/s';
+    }
+  }, { passive: false });
+
+  /* ---------- keyboard ---------- */
+  document.addEventListener('keydown', e => {
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === 's' || e.key === 'S') { e.preventDefault(); saveLevel(); }
+      else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); exportJSON(); }
+      return;
+    }
+    switch (e.key) {
+      case 'ArrowLeft':  e.preventDefault(); if (activeHold) setHoldLane('bottom'); else placeTap('bottom'); break;
+      case 'ArrowRight': e.preventDefault(); if (activeHold) setHoldLane('top'); else placeTap('top'); break;
+      case 'ArrowDown':  e.preventDefault(); if (activeHold) setHoldLane('center'); else placeTap('center'); break;
+      case 'ArrowUp':    e.preventDefault(); startHold(); break;
+      case 'Enter':      e.preventDefault(); endHold(); break;
+      case ' ':          e.preventDefault(); togglePlay(); break;
+      case 'Escape':     e.preventDefault(); stopToReview(); break;
+      case 'Delete': case 'Backspace': e.preventDefault(); deleteSelected(); break;
+      case '+': case '=': zoom = Math.min(400, zoom * 1.2); $('st-zoom').textContent = 'Zoom: ' + Math.round(zoom) + ' px/s'; break;
+      case '-': case '_': zoom = Math.max(8, zoom / 1.2); $('st-zoom').textContent = 'Zoom: ' + Math.round(zoom) + ' px/s'; break;
+    }
+  });
+
+  /* ---------- chrome ---------- */
+  function updateMode() { $('mode').textContent = 'Mode: ' + (mode === 'map' ? (recording ? 'mapping' : 'playing (not recording)') : mode); }
+  function updateStats() {
+    $('st-notes').textContent = 'Notes: ' + notes().length;
+    $('st-bpm').textContent = 'BPM: ' + level.bpm;
+    $('st-offset').textContent = 'Offset: ' + level.offsetMs + 'ms';
+  }
+  $('btn-start').addEventListener('click', startMapping);
+  $('btn-play').addEventListener('click', togglePlay);
+  $('btn-rec').addEventListener('click', () => {
+    recording = !recording;
+    $('btn-rec').classList.toggle('rec-on', recording);
+    updateMode();
+  });
+  $('btn-save').addEventListener('click', saveLevel);
+  $('btn-export').addEventListener('click', exportJSON);
+  $('btn-load').addEventListener('click', () => $('file-json').click());
+  $('file-json').addEventListener('change', () => {
+    const f = $('file-json').files[0];
+    if (f) importJSONFile(f);
+    $('file-json').value = '';
+  });
+  $('btn-clear').addEventListener('click', clearDiff);
+  $('btn-seed').addEventListener('click', loadSeedChart);
+  $('song').addEventListener('change', onSongChange);
+  $('diff').addEventListener('change', () => { finishOpenHold(); selected = null; updateStats(); });
+  ['m-bpm', 'm-offset'].forEach(id => $(id).addEventListener('change', () => { syncMetaFromInputs(); updateStats(); }));
+
+  function frame() {
+    // auto-follow the playhead while mapping
+    if ((mode === 'map' || (mode === 'review' && Z.Audio.isPlaying())) && Z.Audio.isPlaying() && !panning && !drag) {
+      const target = now() - (cv.clientWidth * 0.3) / zoom;
+      if (Math.abs(target - scrollT) > 0.05) scrollT = Math.max(0, target);
+    }
+    scrollT = Math.max(0, Math.min(maxScroll(w0()), scrollT));
+    if (activeHold) activeHold.dur = Math.max(0.1, r3(now() - activeHold.t));
+    $('time').textContent = 'Time: ' + now().toFixed(1) + 's';
+    updateMode();
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- boot ---------- */
+  level = LevelFormat.createBlank('Untitled', '', '', 120, 0);
+  Z.Songs.load(() => { fillSongs(); });
+  syncInputsFromLevel();
+  updateStats();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -63,7 +63,27 @@
           bpm: b ? b.bpm : DEFAULT_BPM, offset: b ? b.offset : 0, duration: 0, status: 'unknown' });
       });
       Object.keys(parsed.map).forEach(id => { if (!seen[id]) notices.push('songs.bmp lists ID ' + id + ' but no matching MP3 is in songs/songs.js.'); });
-      list.sort((a, b) => a.id - b.id);
+
+      /* Custom mapped levels (js/levelFormat.js): shown after the built-in songs, tagged CUSTOM.
+         They reuse the same entry shape so Song Select / gameplay / preview work unchanged;
+         Z.Chart.generate() sees song.custom && song.level and plays the mapped notes as-is. */
+      if (window.LevelFormat && LevelFormat.list) {
+        LevelFormat.list().forEach((lv, i) => {
+          if (!lv || typeof lv.title !== 'string') return;
+          const full = window.LevelFormat.load ? LevelFormat.load(lv.slug) : null;
+          const lvl = full && full.format === 'zigzag-level' ? full : null;
+          const audio = lvl ? lvl.audio : '';
+          if (!audio) { notices.push('Custom level "' + lv.title + '" has no audio path; skipped.'); return; }
+          list.push({
+            id: -(i + 1), name: '★ ' + lv.title, file: String(audio).replace(/^songs\//, ''),
+            url: audio, bpm: (lvl && lvl.bpm) || 120, offset: ((lvl && lvl.offsetMs) || 0) / 1000,
+            duration: 0, status: 'unknown', custom: true, levelSlug: lv.slug,
+            level: lvl || { difficulties: null }
+          });
+        });
+      }
+
+      list.sort((a, b) => (b.id > 0) - (a.id > 0) || a.id - b.id || a.name.localeCompare(b.name));
       Songs.list = list; Songs.notices = notices; Songs.bpmSource = source;
     },
     load(cb) {
@@ -78,6 +98,10 @@
     },
     importBmp(text) { Z.Storage.set('bmpImport', text); Songs.build(text, 'imported songs.bmp'); },
     clearImport() { Z.Storage.remove('bmpImport'); Songs.build((window.ZIGZAG_SONGS || {}).bpm || '', 'built-in copy in songs/songs.js'); },
-    byId(id) { return Songs.list.find(s => s.id === id) || null; }
+    byId(id) { return Songs.list.find(s => s.id === id) || null; },
+    /* Custom LevelFormat levels get negative IDs; Z.Chart.generate() uses this to bypass seeding. */
+    customById(id) { return Songs.list.find(s => s.custom && s.id === id) || null; },
+    customLevels() { return Songs.list.filter(s => s.custom); },
+    byLevelSlug(slg) { return Songs.list.find(s => s.custom && s.levelSlug === slg) || null; }
   };
 })();

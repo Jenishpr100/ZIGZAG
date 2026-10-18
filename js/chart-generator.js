@@ -59,7 +59,48 @@
 
   const r3 = x => Math.round(x * 1000) / 1000;
 
+  /* ---- custom LevelFormat levels (js/levelFormat.js) ----
+     When a song entry carries a hand-mapped level (Z.Songs.customById), its notes are used
+     as-is — no seeded randomness — so the same custom level always plays identically. */
+  const LANE_TO_U = { bottom: 0, center: 1, top: 2 };   // LevelFormat lane name -> game lane index (0..3)
+  function chartFromLevel(level, diffKey) {
+    const key = String(diffKey || 'normal').toUpperCase();
+    const diff = DIFFS[String(diffKey || 'normal').toLowerCase()] || DIFFS.normal;
+    const empty = { notes: [], units: 0, step: gridStep(level && level.bpm || 120, diff), lanes: LANES, difficulty: key.toLowerCase(), seedNumber: 0, custom: true };
+    if (!level || !level.difficulties || !level.difficulties[key] || !Array.isArray(level.difficulties[key].notes)) return empty;
+    const bpm = (level.bpm > 0 && level.bpm) || 120;
+    const step = 60 / bpm;
+    const tickEvery = step >= .5 ? step / 2 : Math.max(step, .2);   // score ticks along holds (same cadence as generated holds)
+    const notes = [];
+    level.difficulties[key].notes.forEach(n => {
+      if (!n || typeof n.t !== 'number' || !LANE_TO_U.hasOwnProperty(n.lane)) return;
+      const lane = LANE_TO_U[n.lane];
+      if (n.type === 'hold' && typeof n.dur === 'number' && n.dur > 0) {
+        const end = r3(n.t + n.dur), ticks = [];
+        for (let tt = n.t + tickEvery; tt <= end + 1e-6; tt += tickEvery) ticks.push(r3(tt));
+        notes.push({ id: notes.length, type: 'hold', t: r3(n.t), lane, end, ticks, flicks: Array.isArray(n.flicks) ? n.flicks.slice() : [] });
+      } else {
+        notes.push({ id: notes.length, type: 'tap', t: r3(n.t), lane, end: r3(n.t), ticks: [] });
+      }
+    });
+    notes.sort((a, b) => a.t - b.t).forEach((n, i) => { n.id = i; });
+    const units = notes.reduce((s, n) => s + 1 + n.ticks.length, 0);
+    return { notes, units, step, lanes: LANES, difficulty: key.toLowerCase(), seedNumber: 0, custom: true };
+  }
+
+  /* Chart -> LevelFormat JSON (needs js/levelFormat.js loaded). meta: { title, artist, audioPath, bpm, offsetMs } */
+  function toLevelFormat(chart, meta) {
+    if (!window.LevelFormat || !window.LevelFormat.fromGeneratedChart) return null;
+    meta = meta || {};
+    return window.LevelFormat.fromGeneratedChart(chart, meta.title || 'Untitled', meta.artist || '', meta.audioPath || '', meta.bpm || 120, meta.offsetMs || 0);
+  }
+
   function generate(o) {
+    try {                                     // custom mapped level wins over the seeded generator
+      const S = window.ZZ && window.ZZ.Songs;
+      const custom = S && S.customById ? S.customById(o.songId) : null;
+      if (custom && custom.level) return chartFromLevel(custom.level, o.difficulty);
+    } catch (e) {}
     const d = DIFFS[o.difficulty] || DIFFS.normal;
     const rng = mulberry32(hashString([o.songId, o.bpm, o.difficulty, seedToNumber(o.seed), r3(o.offset || 0)].join('|')));
     const ri = (a, b) => a + Math.floor(rng() * (b - a + 1));
@@ -134,5 +175,5 @@
     return { notes, units, step, lanes: LANES, difficulty: o.difficulty, seedNumber: seedToNumber(o.seed) };
   }
 
-  Z.Chart = { LANES, DIFFS, ORDER, generate, gridStep, estimateStars, hashString, seedToNumber, randomSeed };
+  Z.Chart = { LANES, DIFFS, ORDER, generate, gridStep, estimateStars, hashString, seedToNumber, randomSeed, chartFromLevel, toLevelFormat };
 })();
