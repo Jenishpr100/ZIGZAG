@@ -203,4 +203,5 @@ Plain globals, no bundler. One person per file at a time — say in chat which f
 - Both worlds (zig/zag) may define rooms; Down-switch keeps player in same room (palette swap) — room geometry shared, world only changes palette + visible layers (per A2 `world` field: zig/zag/both).
 
 - NOTICE TO LLM: MOVEMENT SHOULD BE LIKE POKEMON GAMEBOY, NOT DIAGONAL. MUSIC ASPECT OF THE GAME IS WRONG. THE ENEMIES SHOULD 
-NOT BE DOING THE RHYTHM GAME. THEY SIMPLY ATTACK WITH DIALOG. RESTORE OG MENU FROM PREVIOUS COMMITS. 
+NOT BE DOING THE RHYTHM GAME. THEY SIMPLY ATTACK WITH DIALOG. RESTORE OG MENU FROM PREVIOUS COMMITS. PLAYER ONLY MOVES WITH WASD. 
+- USE LOCAL STORAGE FOR SETTINGS. ADD MOBILE SUPPORT.
