@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ZIGZAG Level Editor</title>
+<style>
+  :root { color-scheme:dark; --panel:rgba(13,13,23,.94); --edge:#35415b; --ink:#eef4ff; --muted:#9ba9bf; --cyan:#53e6e6; --pink:#eb72d2; --gold:#ffd66b; --lane0:#54b5ff; --lane1:#66e7c0; --lane2:#ffba58; --lane3:#f17bd7; }
+  * { box-sizing:border-box; }
+  html,body { width:100%; height:100%; margin:0; overflow:hidden; background:var(--bg,#070810); color:var(--ink); font:14px/1.4 system-ui,sans-serif; }
+  body { user-select:none; }
+  button,input,select,textarea { font:inherit; }
+  button { border:1px solid #45516b; border-radius:9px; padding:8px 12px; color:var(--ink); background:#1a2030; cursor:pointer; }
+  button:hover { border-color:var(--cyan); background:#202b3b; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--panel); border-color:var(--cyan); box-shadow:inset 0 0 0 1px #ffffff12; }
+  input,select,textarea { color:var(--ink); background:#090d17; border:1px solid #35415b; border-radius:7px; padding:7px 9px; }
+  input:focus,select:focus,textarea:focus,button:focus-visible { outline:2px solid var(--cyan); outline-offset:1px; }
+  #topbar { position:fixed; z-index:20; top:10px; left:10px; right:10px; display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 12px; border:1px solid #344058; border-radius:14px; background:var(--panel); box-shadow:0 10px 32px #0008; backdrop-filter:blur(12px); }
+  #topbar h1 { font-size:16px; letter-spacing:.12em; margin:0 8px 0 0; }
+  label { display:flex; gap:6px; align-items:center; color:var(--muted); font-size:12px; }
+  #song-select { min-width:210px; max-width:310px; }
+  #stage-number { width:78px; }
+  #bpm { width:86px; }
+  #offset { width:92px; }
+  #playfield-label { position:fixed; z-index:3; left:50%; top:205px; transform:translateX(-50%); padding:5px 10px; border:1px solid #35415b; border-radius:999px; background:#070810a8; color:#c5d0e5; font-size:11px; letter-spacing:.08em; pointer-events:none; }
+  #timeline-wrap { position:fixed; z-index:5; left:14px; right:min(450px,40vw); top:92px; height:104px; display:flex; flex-direction:column; gap:4px; padding:7px 10px 8px; border:1px solid #35415b; border-radius:12px; background:rgba(7,10,19,.9); box-shadow:0 8px 26px #0008; }
+  #timeline-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; color:#b8c7dc; font-size:10px; letter-spacing:.08em; }
+  #timeline-heading strong { color:var(--cyan); }
+  #timeline-hint { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #timeline-heading label { flex:none; color:var(--muted); font-size:10px; white-space:nowrap; }
+  #timeline-zoom { padding:2px 5px; font-size:10px; }
+  #timeline { display:block; width:100%; flex:1; min-height:0; cursor:crosshair; touch-action:none; }
+  #sidepanel { position:fixed; z-index:20; right:12px; top:104px; bottom:12px; width:min(420px,38vw); display:flex; flex-direction:column; gap:10px; overflow:hidden; padding:12px; border:1px solid #344058; border-radius:16px; background:var(--panel); box-shadow:0 10px 32px #0008; backdrop-filter:blur(12px); }
+  .row { display:flex; flex-wrap:wrap; gap:7px; align-items:center; }
+  .subtle { color:var(--muted); font-size:12px; }
+  #status { min-height:42px; padding:8px 10px; border:1px solid #33415a; border-radius:9px; background:#080d16; color:#c7d5e9; font-size:12px; }
+  #status.error { color:#ffb9b9; border-color:#aa4a58; }
+  #status.success { color:#a8f3d2; border-color:#378c71; }
+  #rec-indicator { color:#ff8585; font-weight:800; }
+  .section-title { display:flex; justify-content:space-between; gap:8px; align-items:center; margin:1px 0 0; font-size:13px; letter-spacing:.08em; }
+  #note-list { flex:1; min-height:100px; overflow:auto; border:1px solid #313d55; border-radius:10px; background:#080c15; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th,td { padding:6px 5px; text-align:left; border-bottom:1px solid #253149; vertical-align:middle; }
+  th { position:sticky; top:0; z-index:1; background:#131b2a; color:#abb8ce; }
+  td select { max-width:93px; padding:4px; }
+  td input { width:80px; padding:4px; }
+  td .delete { padding:4px 7px; color:#ffb4be; }
+  #json-source { width:100%; min-height:124px; resize:vertical; font:11px/1.45 ui-monospace,Consolas,monospace; user-select:text; }
+  #sim-rate { color:var(--cyan); font-variant-numeric:tabular-nums; }
+  #help { margin:0; color:#9aa8bc; font-size:11px; }
+  dialog { width:min(460px,calc(100vw - 28px)); border:1px solid #596b89; border-radius:16px; padding:20px; color:var(--ink); background:#111827; box-shadow:0 24px 90px #000c; }
+  dialog::backdrop { background:#02040bd9; backdrop-filter:blur(4px); }
+  dialog h2 { margin:0 0 8px; }
+  dialog p { color:#b3c0d4; }
+  #download-filename { color:var(--gold); font-weight:700; }
+  @media (max-width: 1100px) {
+    #timeline-wrap { left:10px; right:10px; top:96px; height:100px; }
+    #sidepanel { left:10px; right:10px; top:auto; bottom:10px; width:auto; max-height:42vh; }
+    #note-list { min-height:70px; }
+    #json-source { min-height:76px; }
+  }
+  @media (max-width: 820px) {
+    #topbar { right:8px; left:8px; top:8px; gap:6px; padding:8px; }
+    #topbar h1 { width:100%; }
+    #song-select { min-width:145px; max-width:210px; }
+    #sidepanel { left:8px; right:8px; top:auto; bottom:8px; width:auto; max-height:48vh; }
+    #note-list { min-height:70px; }
+    #json-source { min-height:76px; }
+    #timeline-wrap { left:8px; right:8px; top:142px; height:76px; padding:5px 8px; }
+    #playfield-label { display:none; }
+  }
+</style>
+</head>
+<body>
+<header id="topbar">
+  <h1>ZIGZAG · LEVEL EDITOR</h1>
+  <label>Stage <input id="stage-number" type="number" min="1" max="9999" step="1" value="1"></label>
+  <label>Song <select id="song-select" aria-label="Song and stage"></select></label>
+  <label>BPM <input id="bpm" type="number" min="30" max="400" step="0.1"></label>
+  <label>Offset ms <input id="offset" type="number" step="1"></label>
+  <button id="open-audio">Load audio file</button>
+  <input id="audio-file" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.webm" hidden>
+  <button id="load-stage">Open saved stage</button>
+  <button id="open-file">Open .level</button>
+  <input id="level-file" type="file" accept=".level,.json,application/json" hidden>
+</header>
+<div id="playfield-label">FOUR-LANE GAME PREVIEW · CLICK / HOLD / DRAG ON THE SCENE WHILE RECORDING</div>
+<section id="timeline-wrap" aria-label="Scrolling level timeline">
+  <div id="timeline-heading"><strong>NOTE FLOW</strong><span id="timeline-hint">Click to seek · <span id="timeline-time">00:00.000</span> · D F J K</span><label>Range <select id="timeline-zoom" aria-label="Timeline visible time range"><option value="4">4 sec</option><option value="8" selected>8 sec</option><option value="16">16 sec</option></select></label></div>
+  <canvas id="timeline" tabindex="0" aria-label="Scrolling note timeline. Click to seek through the song."></canvas>
+</section>
+<aside id="sidepanel">
+  <div class="row"><label>Title <input id="title" type="text" maxlength="120"></label><label>Artist <input id="artist" type="text" maxlength="120"></label></div>
+  <div class="row"><label>Author <input id="author" type="text" maxlength="120"></label><label>Difficulty <select id="difficulty"><option>easy</option><option selected>normal</option><option>hard</option><option>expert</option></select></label></div>
+  <div class="row">
+    <button id="record" class="primary">● Record</button>
+    <button id="play">Play</button>
+    <button id="quick-replay" class="primary" title="Play the current level again from the beginning">↺ Quick replay</button>
+    <button id="pause">Pause</button>
+    <button id="rewind">Rewind</button>
+    <button id="sync">Sync</button>
+    <button id="record-section">Record another section</button>
+  </div>
+  <div id="status" role="status">Choose a song and record directly on the four-lane game scene. Timing follows the audio position.</div>
+  <div class="row subtle"><span>Transport: <b id="transport-state">stopped</b></span><span>·</span><span>Recording: <b id="rec-indicator">OFF</b></span><span>·</span><span id="sim-rate">SIM 0 / 240 TPS</span></div>
+  <div class="row">
+    <button id="undo" title="Undo last note or metadata edit" disabled>↶ Undo</button>
+    <button id="redo" title="Redo the last undone edit" disabled>↷ Redo</button>
+    <button id="save-project" class="primary">Save / download .level</button>
+    <button id="download">Download .level</button>
+    <button id="copy">Copy JSON</button>
+    <button id="apply-json">Apply JSON edits</button>
+  </div>
+  <div class="section-title"><span>Recorded notes</span><span id="note-count" class="subtle">0 notes</span></div>
+  <div id="note-list"><table><thead><tr><th>Type</th><th>Lane</th><th>Start / time</th><th>End</th><th></th></tr></thead><tbody id="notes-body"></tbody></table></div>
+  <label for="json-source" class="section-title">Editable .level JSON</label>
+  <textarea id="json-source" spellcheck="false" aria-label="Editable level JSON"></textarea>
+  <p id="help">Lanes use <b>D F J K</b> in play. Click, hold, and drag to record; use the scrolling note timeline to inspect movement or click to seek. Quick replay runs the saved notes again from the start.</p>
+</aside>
+
+<dialog id="download-dialog">
+  <h2>Download level</h2>
+  <p>Choose the stage number. The associated song defaults to the matching numbered file.</p>
+  <label>Stage number <input id="download-stage" type="number" min="1" max="9999" step="1"></label>
+  <p>Filename: <span id="download-filename">stage1.level</span><br>Song: <span id="download-song">—</span></p>
+  <p id="download-message" class="subtle"></p>
+  <div class="row"><button id="confirm-download" class="primary">Download</button><button data-close="download-dialog">Cancel</button></div>
+</dialog>
+<dialog id="complete-dialog">
+  <h2>Level playback complete</h2>
+  <p>Your recorded and edited notes are still available in the editor.</p>
+  <div class="row"><button id="complete-replay" class="primary">↺ Quick replay</button><button id="complete-copy">Copy level JSON</button><button id="complete-download">Download .level</button><button data-close="complete-dialog">Return to editor</button></div>
+</dialog>
+
+<script>window.ZIGZAG_EDITOR_MODE = true;</script>
+<script src="js/song-manifest.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/themes.js"></script>
+<script src="js/levelFormatV1.js"></script>
+<script src="js/songs.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/chart-generator.js"></script>
+<script src="littlejs.min.js"></script>
+<script src="js/data.js"></script>
+<script src="js/battle.js"></script>
+<script src="js/overworld.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/dialog.js"></script>
+<script src="js/levelEditor.js"></script>
+<script src="js/littlejs-game.js"></script>
+</body>
+</html>

@@ -168,7 +168,8 @@ Plain globals, no bundler. One person per file at a time — say in chat which f
   - fix-1 (littlejs-game.js): chart default title `'Zigzag Etude'` → keep (song name, fine) but banner wording may mention game name.
 - Theme word "zigzag" stays visible in gameplay/copy (jam theme requirement) — only the *game title* changes.
 
-### A2. DevEdit expands → comprehensive Dialogue + Room + Map Maker/Editor (fix-3 follow-up)
+### A2. Dialogue + Room + Map Maker/Editor (future follow-up)
+- Beatmap editing now lives in `LevelEditor.html`; the old duplicate `DevEdit.html` page has been removed.
 - Add editor tabs: **BEATMAP** (existing play-to-map) + **WORLD** (rooms/doors/NPCs/dialogue).
 - WORLD tab: draw room grid, place walls/doors/NPCs/enemies/triggers, link doors to target rooms, author dialogue scripts per NPC/trigger (page-per-line, name per speaker).
 - **Export = `GAME.BIN`** (one file, JSON content): all dialogs + all rooms + character placements + door links in a single bundle.
@@ -194,7 +195,7 @@ Plain globals, no bundler. One person per file at a time — say in chat which f
 }
 ```
 - Save: download `GAME.BIN` + also `localStorage` (`muzic-world`) for instant play; main game loads GAME.BIN if present else built-in default world.
-- `levelFormat.js` (beatmap) and world format stay separate files; DevEdit is the one UI editing both.
+- `levelFormat.js` legacy conversion and the world format stay separate; the current beatmap editor edits `levels/stageN.level` files.
 
 ### A3. Pokémon-style doors (des-2 follow-up)
 - Rooms = separate maps (multi-room world instead of single 40×30 hub).

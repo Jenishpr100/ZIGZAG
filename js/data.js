@@ -150,8 +150,7 @@ const DATA = {
         friction: 26,       // how quickly you stop
         radius: 0.32,       // player collision radius
         zigLeg: 0.45,       // minimum length of one zigzag leg toward the cursor
-        portalRange: 1.05,  // walk inside this to drop into the stage
-        portalPrompt: 3.6,  // show the "press to enter" prompt inside this
+        portalPrompt: 3.6,  // show the prompt and allow portal interaction inside this
         seed: 20261018,
         sparkRate: 18,      // ambient particles per second
     },

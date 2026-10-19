@@ -81,7 +81,7 @@
 // constants
 ///////////////////////////////////////////////////////////////////////////////
 
-const COMMANDS = ['ATTACK', 'DEFEND', 'DEFAULT', 'BRAVE', 'USE_ITEM', 'SPECATTACK'];
+const COMMANDS = ['ATTACK', 'DEFEND', 'DEFAULT', 'BRAVE', 'USE_ITEM', 'ZIGZAG'];
 
 const DESC = {
     ATTACK:     'Basic strike — weapon power + score bonus',
@@ -89,7 +89,7 @@ const DESC = {
     DEFAULT:    'Bank defense — 25%+ damage cut, +5 DEF until next command',
     BRAVE:      'High risk — x2 attack, but take +50% damage this turn',
     USE_ITEM:   'Use one item from your bag',
-    SPECATTACK: 'Harder chart next — land 70%+ accuracy for x3 damage',
+    ZIGZAG:     'Drag through the five lights. A clean trace earns x3 damage',
 };
 
 // phase lengths, seconds
@@ -126,7 +126,18 @@ function pal()
 {
     if (PAL) return PAL;
     const src = typeof DATA != 'undefined' && DATA.colors ? DATA.colors : {};
-    const hex = k => src[k] || FALLBACK[k] || '#ffffff';
+    const th = typeof ZZ != 'undefined' && ZZ.theme || null;
+    const themed = th ? {
+        bg: th.ui && th.ui.bg,
+        neon: th.ui && th.ui.accent,
+        neonSoft: th.hold,
+        cyan: th.ui && th.ui.accent2,
+        violet: th.drag,
+        ink: th.ui && th.ui.text,
+        dim: th.ui && th.ui.dim,
+        gold: th.drag,
+    } : {};
+    const hex = k => themed[k] || src[k] || FALLBACK[k] || '#ffffff';
     const mk = k =>
     {
         try { return new Color().setHex(hex(k)); }
@@ -183,6 +194,7 @@ const B = {
     phase: 0, hitDone: false, ended: false,
     lastCommand: '',
     pendingDmg: 0, pendingLabel: '', pendingCrit: false, specSuccess: false,
+    zigzag: null,
 
     menuAnim: 0,                // menu slide-in 0..1
     toast: '', toastLife: 0,
@@ -346,6 +358,7 @@ function start(enemyConfig, playerState, onBattleEnd, opts)
     B.section = 0; B.ended = false; B.t = 0;
     B.hitDone = false; B.pendingDmg = 0; B.pendingLabel = ''; B.pendingCrit = false;
     B.toast = ''; B.toastLife = 0;
+    B.zigzag = null;
     B.enemyFlash = 0; B.playerFlash = 0; B.enemyOx = 0; B.enemyOy = 0;
     B.intentIndex = 0; B.intent = rollIntent();
     B.onEnd = typeof onBattleEnd == 'function' ? onBattleEnd : null;
@@ -360,6 +373,7 @@ function stop()
     B.onEnd = null; B.onSection = null;
     B.enemy = null; B.player = null;
     B.items = []; B.newItems = [];
+    B.zigzag = null;
     B.toastLife = 0;
 }
 
@@ -404,19 +418,90 @@ function pickCommand(cmd)
     if (cmd == 'USE_ITEM') { openItems(); return true; }
     if (COMMANDS.indexOf(cmd) < 0) return false;
     if (cmd == 'SPECATTACK') { beginSpec(); return true; }
+    if (cmd == 'ZIGZAG') { beginZigzag(); return true; }
     execute(cmd);
     return true;
 }
 
-// SPECATTACK arms the spec chart: the play state should run the harder chart
-// for the next section, then call resolveSpec(accuracy) with the result.
+function beginZigzag()
+{
+    B.state = 'ZIGZAG_TRACE';
+    B.phase = 0;
+    B.zigzag = { started: false, index: 0, quality: 0, time: 0, previous: null };
+    toast('TRACE THE ZIGZAG WITH YOUR MOUSE', 1.4);
+}
+
+function zigzagPoints(S)
+{
+    const midY = S.y * .56, rise = Math.min(48, S.y * .07), left = S.x * .2, step = S.x * .15;
+    return [0,1,2,3,4].map(i => vec2(left + step * i, midY + (i % 2 ? -rise : rise)));
+}
+
+function pointerScreenPos(S)
+{
+    if (typeof mousePos == 'undefined' || typeof cameraScale != 'number') return null;
+    const cp = typeof cameraPos != 'undefined' && cameraPos ? cameraPos : vec2();
+    return vec2(S.x * .5 + (mousePos.x - cp.x) * cameraScale,
+        S.y * .5 - (mousePos.y - cp.y) * cameraScale);
+}
+
+function segmentDistance(p, a, b)
+{
+    const dx = b.x - a.x, dy = b.y - a.y, denom = dx * dx + dy * dy;
+    const t = denom ? clampN(((p.x - a.x) * dx + (p.y - a.y) * dy) / denom, 0, 1) : 0;
+    return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+}
+
+function updateZigzag(dt)
+{
+    const z = B.zigzag, S = screenSize();
+    if (!z || !S) return;
+    z.time += dt;
+    const points = zigzagPoints(S), pointer = pointerScreenPos(S), radius = Math.max(34, Math.min(52, S.x * .065));
+    if (pointer && mouseIsDown(0))
+    {
+        if (!z.started && mouseWasPressed(0) && Math.hypot(pointer.x - points[0].x, pointer.y - points[0].y) <= radius * 1.45)
+        {
+            z.started = true;
+            z.index = 1;
+            z.quality = clampN(1 - Math.hypot(pointer.x - points[0].x, pointer.y - points[0].y) / (radius * 1.45), .55, 1);
+            z.previous = pointer;
+        }
+        else if (z.started && z.previous)
+        {
+            while (z.index < points.length && segmentDistance(points[z.index], z.previous, pointer) <= radius)
+            {
+                const d = Math.hypot(points[z.index].x - pointer.x, points[z.index].y - pointer.y);
+                z.quality += clampN(1 - d / (radius * 1.8), .45, 1);
+                z.index++;
+            }
+            z.previous = pointer;
+        }
+    }
+    if (z.index >= points.length) { finishZigzag(); return; }
+    if (backPressed()) { B.zigzag = null; B.state = 'MENU_SELECT'; B.menuAnim = 1; return; }
+    if (z.time >= 5) finishZigzag();
+}
+
+function finishZigzag()
+{
+    const z = B.zigzag;
+    if (!z) return;
+    const accuracy = z.quality / 5 * 100;
+    B.specSuccess = accuracy >= 70;
+    toast(B.specSuccess ? 'CLEAN ZIGZAG — ' + Math.round(accuracy) + '%' : 'ZIGZAG MISSED — ' + Math.round(accuracy) + '%', 1.3);
+    B.zigzag = null;
+    execute('ZIGZAG');
+}
+
+// SPECATTACK resolves from the player's most recent rhythm accuracy. This keeps
+// the signature move usable from the integrated battle screen without leaving
+// the player stuck in a chart-waiting state.
 function beginSpec()
 {
-    B.specSuccess = false;
-    B.state = 'SPEC_CHART';
-    B.menuAnim = 0;
-    toast('SPEC CHART!', 1);
-    if (B.onSection) B.onSection({ section: B.section + 1, spec: true });
+    B.specSuccess = B.accuracy >= 70;
+    toast(B.specSuccess ? 'RHYTHM BURST!' : 'BUILD YOUR ACCURACY!', 1);
+    execute('SPECATTACK');
 }
 
 function openMenu()
@@ -462,11 +547,11 @@ function execute(cmd)
         B.reduction = -0.5;                              // take +50% damage
         B.pendingDmg = damageToEnemy(weapon().power * 2 + atkBonus());
     }
-    else if (cmd == 'SPECATTACK')
+    else if (cmd == 'SPECATTACK' || cmd == 'ZIGZAG')
     {
-        // resolveSpec() sets specSuccess first; fallback = normal attack
+        // A clean mouse trace earns the signature triple strike.
         B.pendingDmg = damageToEnemy(baseAttack() * (B.specSuccess ? 3 : 1));
-        B.pendingLabel = B.specSuccess ? 'SPEC ATTACK!!' : 'SPEC FAILED...';
+        B.pendingLabel = B.specSuccess ? 'ZIGZAG SLASH!!' : 'ZIGZAG SLASH';
     }
     // USE_ITEM: the item already resolved in useItem(); enemy still counters
 
@@ -636,6 +721,10 @@ function update(dt)
     case 'SPEC_CHART':
         break;                                  // waiting on resolveSpec()
 
+    case 'ZIGZAG_TRACE':
+        updateZigzag(dt);
+        break;
+
     case 'EXECUTE_COMMAND':
         phaseExec(dt);
         break;
@@ -649,14 +738,17 @@ function update(dt)
         break;
 
     case 'BATTLE_WON':
+        B.phase += dt;
+        B.menuAnim = Math.max(0, B.menuAnim - dt * 4);
+        if (!B.ended && (confirmPressed() || (typeof mouseWasPressed == 'function' && mouseWasPressed(0))))
+        { B.ended = true; finishBattle(true); }
+        break;
+
     case 'BATTLE_LOST':
         B.phase += dt;
         B.menuAnim = Math.max(0, B.menuAnim - dt * 4);
         if (B.phase >= T.banner && !B.ended)
-        {
-            B.ended = true;
-            finishBattle(B.state == 'BATTLE_WON');
-        }
+        { B.ended = true; finishBattle(false); }
         break;
 
     default:
@@ -866,6 +958,7 @@ function render()
     if (B.state == 'MENU_SELECT') renderMenu(S, P);
     else if (B.state == 'ITEM_SELECT') renderItems(S, P);
     else if (B.state == 'SPEC_CHART') renderSpecBanner(S, P);
+    else if (B.state == 'ZIGZAG_TRACE') renderZigzag(S, P);
     else if (B.state == 'EXECUTE_COMMAND') renderCommandFlash(S, P);
     else if (B.state == 'ENEMY_TURN') renderEnemyTurn(S, P);
     else if (B.state == 'BATTLE_WON' || B.state == 'BATTLE_LOST') renderBanner(S, P);
@@ -990,13 +1083,14 @@ function renderMenu(S, P)
 {
     const slide = (1 - smooth(B.menuAnim)) * (S.y * 0.3);
     const x = 20, w = S.x - 40;
-    const h = Math.max(150, S.y * 0.28);
+    const rows = Math.ceil(COMMANDS.length / 2);
+    const h = Math.max(210, S.y * 0.34);
     const y = S.y - h - 18 + slide;
 
     panel(x, y, w, h, A(P.cyan, 0.45), 18);
 
     const pad = 14;
-    const cw = (w - pad * 3) / 2, ch = (h - pad * 3) / 2;
+    const cw = (w - pad * 3) / 2, ch = (h - pad * (rows + 1)) / rows;
     const pulse = 0.5 + 0.5 * Math.sin(B.t * 5);
 
     for (let i = 0; i < COMMANDS.length; ++i)
@@ -1073,6 +1167,29 @@ function renderSpecBanner(S, P)
         A(P.cyan, 0.9), 'center', fontOf(true));
 }
 
+function renderZigzag(S, P)
+{
+    const z = B.zigzag || { index: 0, started: false };
+    const points = zigzagPoints(S), radius = Math.max(34, Math.min(52, S.x * .065));
+    const w = Math.min(S.x * .9, 660), x = (S.x - w) / 2, y = S.y * .56;
+    panel(x, y - 92, w, 184, A(P.violet, .8), 18);
+    textScreen('TRACE THE ZIGZAG', S.x / 2, y - 62, clampN(S.x * .045, 19, 34), P.ink,
+        'center', fontOf(), 5, A(P.bg, .9), '2px');
+    textScreen(z.started ? 'KEEP HOLDING AND FOLLOW THE LIGHTS' : 'PRESS AND DRAG FROM THE LEFT LIGHT',
+        S.x / 2, y - 38, clampN(S.x * .02, 11, 15), A(P.cyan, .95), 'center', fontOf(true));
+    for (let i = 0; i < points.length - 1; i++)
+        drawLine(points[i], points[i + 1], 6, A(i < z.index ? P.good : P.neon, .8), vec2(), 0, true, true);
+    for (let i = 0; i < points.length; i++)
+    {
+        const active = i === z.index || (!z.started && i === 0);
+        drawCircle(points[i], radius * .43, A(active ? P.gold : (i < z.index ? P.good : P.bg), .95),
+            0, 4, A(active ? P.ink : P.cyan, .95), true, true);
+        textScreen(String(i + 1), points[i].x, points[i].y + 6, 18, P.bg, 'center', fontOf());
+    }
+    textScreen('5 seconds · trace all five lights for a triple attack', S.x / 2, y + 70,
+        clampN(S.x * .018, 10, 14), A(P.dim, .95), 'center', fontOf(true));
+}
+
 function renderCommandFlash(S, P)
 {
     const a = clamp01(1.4 - B.phase / T.exec);
@@ -1109,6 +1226,26 @@ function renderBanner(S, P)
         ? (B.newItems.length ? 'LOOT: ' + B.newItems.map(itemName).join(' · ') : 'THE PATH CLEARS')
         : 'THE ZIGZAG GOES ON...', S.x / 2, S.y * 0.46 + 34, clampN(S.x * 0.026, 12, 20),
         A(P.ink, 0.85), 'center', fontOf(true));
+    if (won)
+    {
+        const gx = S.x / 2, gateY = S.y * .66, gateW = Math.min(76, S.x * .2), gateH = 82;
+        const left = gx - gateW / 2, right = gx + gateW / 2;
+        const top = gateY - gateH / 2, bottom = gateY + gateH / 2;
+        drawRect(vec2(gx, gateY), vec2(gateW - 14, gateH - 12), A(P.violet, .58), 0, true, true);
+        drawLine(vec2(left, bottom), vec2(left, top + 12), 6, A(P.good, .95), vec2(), 0, true, true);
+        drawLine(vec2(right, bottom), vec2(right, top + 12), 6, A(P.good, .95), vec2(), 0, true, true);
+        const roof = [vec2(left, top + 12), vec2(gx - gateW*.24, top + 2), vec2(gx - gateW*.08, top + 12),
+            vec2(gx + gateW*.08, top + 2), vec2(gx + gateW*.24, top + 12), vec2(right, top + 12)];
+        drawLineList(roof, 6, A(P.good, .95), false, vec2(), 0, true, true);
+        drawLine(vec2(left, bottom), vec2(right, bottom), 5, A(P.good, .9), vec2(), 0, true, true);
+
+        const gy = S.y * .82, gw = Math.min(250, S.x * .78), gh = 58;
+        panel((S.x - gw) / 2, gy - gh / 2, gw, gh, A(P.good, .8), 12);
+        textScreen('EXIT GATE OPEN', S.x / 2, gy - 4, clampN(S.x * .03, 15, 22), P.good,
+            'center', fontOf(), 3, A(P.bg, .9), '1px');
+        textScreen('[ ENTER OR CLICK TO EXIT ]', S.x / 2, gy + 18, clampN(S.x * .018, 10, 14), P.ink,
+            'center', fontOf(true));
+    }
 }
 
 function renderToast(S, P)
@@ -1140,5 +1277,7 @@ window.Battle = {
         critChance: critChance(),
     }),
 };
+window.ZZ = window.ZZ || {};
+window.ZZ.Battle = window.Battle;
 
 })();

@@ -1,0 +1,259 @@
+{
+  "version": 1,
+  "stage": 5,
+  "title": "Glass Steps",
+  "artist": "Original demo track",
+  "author": "ZIGZAG",
+  "song": "5-Glass Steps.wav",
+  "bpm": 108,
+  "offsetMs": 0,
+  "difficulty": "normal",
+  "notes": [
+    {
+      "id": "stage5-auto-001",
+      "type": "click",
+      "lane": 0,
+      "time": 2222
+    },
+    {
+      "id": "stage5-auto-002",
+      "type": "click",
+      "lane": 2,
+      "time": 2778
+    },
+    {
+      "id": "stage5-auto-003",
+      "type": "click",
+      "lane": 0,
+      "time": 3334
+    },
+    {
+      "id": "stage5-auto-004",
+      "type": "click",
+      "lane": 2,
+      "time": 3890
+    },
+    {
+      "id": "stage5-auto-005",
+      "type": "click",
+      "lane": 0,
+      "time": 4446
+    },
+    {
+      "id": "stage5-auto-006",
+      "type": "click",
+      "lane": 1,
+      "time": 5002
+    },
+    {
+      "id": "stage5-auto-007",
+      "type": "click",
+      "lane": 0,
+      "time": 5558
+    },
+    {
+      "id": "stage5-auto-008",
+      "type": "hold",
+      "lane": 2,
+      "startTime": 6114,
+      "endTime": 6669
+    },
+    {
+      "id": "stage5-auto-009",
+      "type": "click",
+      "lane": 1,
+      "time": 7225
+    },
+    {
+      "id": "stage5-auto-010",
+      "type": "click",
+      "lane": 3,
+      "time": 7781
+    },
+    {
+      "id": "stage5-auto-011",
+      "type": "click",
+      "lane": 2,
+      "time": 8337
+    },
+    {
+      "id": "stage5-auto-012",
+      "type": "click",
+      "lane": 0,
+      "time": 10004
+    },
+    {
+      "id": "stage5-auto-013",
+      "type": "click",
+      "lane": 2,
+      "time": 10560
+    },
+    {
+      "id": "stage5-auto-014",
+      "type": "click",
+      "lane": 1,
+      "time": 11671
+    },
+    {
+      "id": "stage5-auto-015",
+      "type": "click",
+      "lane": 3,
+      "time": 12227
+    },
+    {
+      "id": "stage5-auto-016",
+      "type": "click",
+      "lane": 2,
+      "time": 12783
+    },
+    {
+      "id": "stage5-auto-017",
+      "type": "click",
+      "lane": 0,
+      "time": 13894
+    },
+    {
+      "id": "stage5-auto-018",
+      "type": "click",
+      "lane": 2,
+      "time": 14450
+    },
+    {
+      "id": "stage5-auto-019",
+      "type": "drag",
+      "lane": 1,
+      "startTime": 15006,
+      "endTime": 16117,
+      "path": [
+        {
+          "lane": 1,
+          "time": 15006
+        },
+        {
+          "lane": 3,
+          "time": 15561
+        },
+        {
+          "lane": 2,
+          "time": 16117
+        }
+      ]
+    },
+    {
+      "id": "stage5-auto-020",
+      "type": "click",
+      "lane": 3,
+      "time": 16673
+    },
+    {
+      "id": "stage5-auto-021",
+      "type": "click",
+      "lane": 2,
+      "time": 17229
+    },
+    {
+      "id": "stage5-auto-022",
+      "type": "click",
+      "lane": 0,
+      "time": 17785
+    },
+    {
+      "id": "stage5-auto-023",
+      "type": "click",
+      "lane": 1,
+      "time": 18341
+    },
+    {
+      "id": "stage5-auto-024",
+      "type": "click",
+      "lane": 0,
+      "time": 18897
+    },
+    {
+      "id": "stage5-auto-025",
+      "type": "click",
+      "lane": 2,
+      "time": 20008
+    },
+    {
+      "id": "stage5-auto-026",
+      "type": "click",
+      "lane": 1,
+      "time": 20564
+    },
+    {
+      "id": "stage5-auto-027",
+      "type": "click",
+      "lane": 3,
+      "time": 21120
+    },
+    {
+      "id": "stage5-auto-028",
+      "type": "click",
+      "lane": 1,
+      "time": 21676
+    },
+    {
+      "id": "stage5-auto-029",
+      "type": "click",
+      "lane": 3,
+      "time": 22232
+    },
+    {
+      "id": "stage5-auto-030",
+      "type": "hold",
+      "lane": 2,
+      "startTime": 23899,
+      "endTime": 25010
+    },
+    {
+      "id": "stage5-auto-031",
+      "type": "click",
+      "lane": 1,
+      "time": 25566
+    },
+    {
+      "id": "stage5-auto-032",
+      "type": "hold",
+      "lane": 3,
+      "startTime": 26122,
+      "endTime": 26677
+    },
+    {
+      "id": "stage5-auto-033",
+      "type": "click",
+      "lane": 1,
+      "time": 27233
+    },
+    {
+      "id": "stage5-auto-034",
+      "type": "click",
+      "lane": 2,
+      "time": 27789
+    },
+    {
+      "id": "stage5-auto-035",
+      "type": "click",
+      "lane": 0,
+      "time": 28345
+    },
+    {
+      "id": "stage5-auto-036",
+      "type": "click",
+      "lane": 1,
+      "time": 28901
+    },
+    {
+      "id": "stage5-auto-037",
+      "type": "click",
+      "lane": 3,
+      "time": 29457
+    },
+    {
+      "id": "stage5-auto-038",
+      "type": "click",
+      "lane": 1,
+      "time": 30568
+    }
+  ]
+}

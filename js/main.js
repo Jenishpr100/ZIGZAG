@@ -3,7 +3,7 @@
   const Z = (window.ZZ = window.ZZ || {});
   function boot() {
     Z.applyTheme(Z.Settings.get('theme'));
-    Z.Game.init(document.getElementById('game'), { show: (n, m) => Z.Menu.showOverlay(n, m) });
+    Z.Game.init(document.getElementById('s-game'), { show: (n, m) => Z.Menu.showOverlay(n, m) });
     Z.Songs.load(() => Z.Menu.init());
 
     document.addEventListener('keydown', e => {

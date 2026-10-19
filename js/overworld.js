@@ -29,7 +29,38 @@ let worldTiles, WORLD_W = 0, WORLD_H = 0;
 let worldBuilt = false;
 let portalPos = vec2(), worldSpawn = vec2();
 let player = null;
+let portalPointerArmed = true;
 const worldDecor = [];
+
+// A menu click can still be present in LittleJS after the hub opens. Require a
+// clean release before a pointer tap is allowed to activate the stage portal.
+function owLockPortalPointerUntilRelease() { portalPointerArmed = false; }
+
+function owCanEnterPortal()
+{
+    if (state !== 'world' || worldPaused || !player || stageEntering ||
+        ZZ.Menu && ZZ.Menu.current !== 'game') return false;
+    const distance = player.pos.subtract(portalPos).length();
+    const talking = typeof Dialog != 'undefined' && Dialog.inputLocked();
+    return !talking && !owInteractableAt(player.pos) && distance < DATA.world.portalPrompt;
+}
+
+// LittleJS reads keyboard and pointer state on its animation loop. Start the
+// portal transition from the browser's original input event as well, so the
+// browser still treats the music request as part of the user's gesture.
+window.addEventListener('keydown', event => {
+    if (event.repeat || !['Space', 'Enter', 'NumpadEnter'].includes(event.code) || !owCanEnterPortal()) return;
+    event.preventDefault();
+    enterStage();
+}, true);
+
+document.addEventListener('pointerdown', event => {
+    const game = document.getElementById('s-game');
+    if (event.button !== 0 || !(event.target instanceof HTMLCanvasElement) ||
+        !game || !game.contains(event.target) || !portalPointerArmed || !owCanEnterPortal()) return;
+    event.preventDefault();
+    enterStage();
+}, true);
 
 // ---- the two worlds ---------------------------------------------------------
 let currentWorld = 'zig';               // 'zig' | 'zag' — persists across trips
@@ -622,7 +653,8 @@ class WorldDecor extends EngineObject
             setAdditiveBlendMode(true);
             drawRect(p.add(vec2(0, 2.3)), vec2(4.4, 1.6), alpha(P.accent, .05 + pulse*.05));
             setAdditiveBlendMode(false);
-            drawText('STAGE 01', p.add(vec2(0, 3.1)), .5, C.gold, .04, P.shade, 'center', DATA.ui.font);
+        const stageId = selectedSong ? selectedSong.id : 1;
+        drawText('STAGE ' + String(stageId).padStart(2, '0'), p.add(vec2(0, 3.1)), .5, C.gold, .04, P.shade, 'center', DATA.ui.font);
         }
     }
 }
@@ -675,8 +707,10 @@ class Portal extends EngineObject
             drawCircle(q, .16, i % 2 ? C.neonSoft : C.cyan);
         }
 
-        drawText('STAGE 01', p.add(vec2(0, 2.6)), .55, C.ink, .05, P.bg, 'center', DATA.ui.font);
-        drawText('zigzag etude', p.add(vec2(0, 2.05)), .32, C.cyan, 0, P.bg, 'center', DATA.ui.soft);
+        const stageId = selectedSong ? selectedSong.id : 1;
+        drawText('STAGE ' + String(stageId).padStart(2, '0'), p.add(vec2(0, 2.6)), .55, C.ink, .05, P.bg, 'center', DATA.ui.font);
+        drawText(selectedSong ? selectedSong.name.toLowerCase() : 'demo pulse', p.add(vec2(0, 2.05)), .32,
+            C.cyan, 0, P.bg, 'center', DATA.ui.soft);
     }
 }
 
@@ -736,8 +770,10 @@ class WorldDoor extends EngineObject
         // the door slab
         const lock = this.lockFlash;
         const slab = open ? P.doorOpen : P.door;
-        drawRect(p.add(vec2(0, .2)), vec2(.82, 1.35), alpha(slab, (.92 - .25*pulse)*a));
-        drawRect(p.add(vec2(0, .2)), vec2(.6, 1.2), alpha(P.shade, (open ? .18 : .45)*a));
+        drawRect(p.add(vec2(0, .2)), vec2(.82, 1.35), alpha(slab, (open ? .18 + .1*pulse : .92 - .25*pulse)*a));
+        drawRect(p.add(vec2(0, .2)), vec2(.6, 1.2), alpha(P.shade, (open ? .03 : .45)*a));
+        if (open)
+            drawRect(p.add(vec2(0, .2)), vec2(.36, 1.0), alpha(P.doorOpen, (.22 + pulse*.12)*a));
         // handle
         drawCircle(p.add(vec2(.24, .18)), .07, alpha(DATA.c.ink, .8*a));
 
@@ -766,15 +802,15 @@ class WorldDoor extends EngineObject
         // label when the player is close
         if (near > .05 && !lock)
         {
-            const state_ = open ? 'OPEN' : 'LOCKED';
+            const state_ = this.enemyId && this.defeated() ? 'EXIT OPEN' : open ? 'OPEN' : 'CHALLENGE';
             drawText(this.def.label, p.add(vec2(0, 1.7)), .34,
                 alpha(open ? P.doorOpen : DATA.c.ink, (.6 + .4*near)*a),
                 0, P.shade, 'center', DATA.ui.font);
             drawText(state_, p.add(vec2(0, 1.4)), .24,
                 alpha(open ? P.doorOpen : DATA.c.bad, (.55 + .35*pulse)*a),
                 0, P.shade, 'center', DATA.ui.font);
-            if (open)
-                drawText('[ ENTER ]', p.add(vec2(0, -1.0)), .22,
+            if (open || this.enemyId)
+                drawText(this.enemyId && !this.defeated() ? '[ ENTER TO FIGHT ]' : this.enemyId ? '[ ENTER TO EXIT ]' : '[ ENTER ]', p.add(vec2(0, -1.0)), .22,
                     alpha(DATA.c.ink, (.5 + .4*pulse)*a), 0, P.shade, 'center', DATA.ui.soft);
         }
     }
@@ -1015,10 +1051,15 @@ class Player extends EngineObject
         const d = this.pos.subtract(portalPos).length();
         const talking = typeof Dialog != 'undefined' && Dialog.inputLocked();
         const busy = talking || !!owInteractableAt(this.pos);
+        const pointerPressed = mouseWasPressed(0);
+        if (!portalPointerArmed && !mouseIsDown(0) && !pointerPressed)
+            portalPointerArmed = true;
         const press = keyWasPressed('Space') || keyWasPressed('Enter') || keyWasPressed('NumpadEnter');
-        if (d < W.portalRange || (!busy && press) && d < W.portalPrompt)
+        // Require an explicit interaction so audio playback is requested from
+        // the player's click/key gesture (browser autoplay policy needs this).
+        if (!busy && press && d < W.portalPrompt)
             enterStage();
-        else if (!busy && mouseWasPressed(0) && d < W.portalPrompt)
+        else if (portalPointerArmed && !busy && pointerPressed && d < W.portalPrompt)
             enterStage();
     }
 
@@ -1324,7 +1365,7 @@ function owUpdate(dt)
                     dr.lockFlash = 1;
                     dr.cool = DATA.tuning.doorCooldown;
                     owDialogShow(dr.def.enemyName || 'WARDEN',
-                        ['The enemy blocks your path!']);
+                        ['A warden guards the gate.', 'Press ENTER beside the gate to challenge it.']);
                 }
             }
             else if (!inside)
@@ -1337,9 +1378,21 @@ function owActDoor(dr)
 {
     if (dr.enemyId && !dr.defeated())
     {
-        dr.lockFlash = 1;
-        dr.cool = DATA.tuning.doorCooldown;
-        owDialogShow(dr.def.enemyName || 'WARDEN', ['The enemy blocks your path!']);
+        if (typeof ZZ.startBattle == 'function') ZZ.startBattle(dr.enemyId, dr.def);
+        else owDialogShow(dr.def.enemyName || 'WARDEN', ['The arena is unavailable right now.']);
+        return;
+    }
+    if (dr.enemyId && dr.defeated())
+    {
+        owSetWorld('zig');
+        if (player)
+        {
+            player.pos = worldSpawn.copy();
+            player.vel = vec2();
+            player.trail.length = 0;
+            player.zigTarget = null;
+        }
+        owDialogShow('EXIT GATE', ['The warden is defeated.', 'You are back at the portal plaza.']);
         return;
     }
     if (dr.def.open)

@@ -151,7 +151,7 @@ function hudTitle()
 
     // ---- logo ---------------------------------------------------------------
     const logoY = S.y*.30;
-    const word = 'ZIGZAG', opts = { align:'center', font: DATA.ui.font, style:'900' };
+    const word = 'MuZiC', opts = { align:'center', font: DATA.ui.font, style:'900' };
     const jitter = sin(HUD.t*8)*.6;
     uiSpaced(word, cx - 6, logoY + 6, titleSize, alpha(C.cyan, .55), titleSize*.045, opts);
     uiSpaced(word, cx + 6, logoY - 4, titleSize, alpha(C.neon, .6), titleSize*.045, opts);
@@ -165,10 +165,10 @@ function hudTitle()
     uiZigRule(cx - ruleW/2, cx + ruleW/2, logoY + titleSize*.78,
         14, titleSize*.07, 1.5, C.cyan);
 
-    uiSpaced('SYNTH', cx, logoY + titleSize*1.16, titleSize*.34, C.cyan,
+    uiSpaced('SWITCH', cx, logoY + titleSize*1.16, titleSize*.30, C.cyan,
         titleSize*.16, { align:'center', font: DATA.ui.font, style:'900',
             lineWidth: titleSize*.05, lineColor: C.bg });
-    uiText('PJSK  ×  PIANO TILES   ·   LITTLEJS JAM 3', cx, logoY + titleSize*1.52,
+    uiText('PRESS THE ZIGZAG  ·  LITTLEJS JAM 3', cx, logoY + titleSize*1.52,
         clamp(titleSize*.15, 11, 17), alpha(C.dim, .95),
         { align:'center', font: DATA.ui.soft });
 
@@ -199,18 +199,27 @@ function hudTitle()
 
     // ---- controls -----------------------------------------------------------
     const ch = snug ? 66 : 92;
-    const cy2 = snug ? S.y - ch/2 - 46 : S.y*.80, cw = Math.min(S.x*.86, 660);
+    const cy2 = snug ? S.y - ch/2 - 46 : S.y*.80, cw = Math.min(S.x*.9, 660);
     uiPanel(cx - cw/2, cy2 - ch/2, cw, ch, alpha(C.cyan, .35), 16);
-    const row = snug ? [-14, 4, 22] : [-18, 6, 30];
-    uiText('WALK', cx - cw/2 + 26, cy2 + row[0], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
-    uiText('ARROWS  /  WASD', cx + cw/2 - 26, cy2 + row[0], 16, C.ink,
-        { align:'right', font: DATA.ui.font });
-    uiText('ZIGZAG TO THE CURSOR', cx - cw/2 + 26, cy2 + row[1], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
-    uiText('HOLD / TAP THE MOUSE', cx + cw/2 - 26, cy2 + row[1], 16, C.neonSoft,
-        { align:'right', font: DATA.ui.font });
-    uiText('ENTER THE STAGE', cx - cw/2 + 26, cy2 + row[2], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
-    uiText('WALK IN  ·  SPACE', cx + cw/2 - 26, cy2 + row[2], 16, C.cyan,
-        { align:'right', font: DATA.ui.font });
+    if (S.x < 560)
+    {
+        uiText('WALK  ·  ARROWS / WASD', cx, cy2 - 16, 12, C.ink, { align:'center', font: DATA.ui.font });
+        uiText('DRAW A ZIGZAG  ·  HOLD / DRAG', cx, cy2 + 2, 11, C.neonSoft, { align:'center', font: DATA.ui.font });
+        uiText('ENTER STAGE  ·  SPACE', cx, cy2 + 20, 12, C.cyan, { align:'center', font: DATA.ui.font });
+    }
+    else
+    {
+        const row = snug ? [-14, 4, 22] : [-18, 6, 30];
+        uiText('WALK', cx - cw/2 + 26, cy2 + row[0], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
+        uiText('ARROWS  /  WASD', cx + cw/2 - 26, cy2 + row[0], 16, C.ink,
+            { align:'right', font: DATA.ui.font });
+        uiText('DRAW A ZIGZAG', cx - cw/2 + 26, cy2 + row[1], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
+        uiText('HOLD / DRAG THE MOUSE', cx + cw/2 - 26, cy2 + row[1], 16, C.neonSoft,
+            { align:'right', font: DATA.ui.font });
+        uiText('ENTER THE STAGE', cx - cw/2 + 26, cy2 + row[2], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
+        uiText('WALK IN  ·  SPACE', cx + cw/2 - 26, cy2 + row[2], 16, C.cyan,
+            { align:'right', font: DATA.ui.font });
+    }
 
     // ---- best ---------------------------------------------------------------
     if (best > 0)
@@ -242,20 +251,62 @@ function hudWorld()
 
     uiVignette(.5);
 
-    // ---- logo chip, top left ------------------------------------------------
-    uiPanel(16, 14, 208, 54, alpha(C.neon, .45), 14);
-    uiText('ZIGZAG', 34, 32, 20, C.ink, { font: DATA.ui.font, style:'900' });
-    uiText('SYNTH', 34, 52, 12, C.cyan, { font: DATA.ui.font, style:'900' });
-    uiZig([vec2(150, 26), vec2(162, 38), vec2(174, 26), vec2(186, 38), vec2(198, 26)],
-        2.5, alpha(C.neon, .8));
+    const compact = S.x < 620;
+    const pulseB = .5 + .5*sin(HUD.t*2.2);
 
-    // ---- world badge, beside the logo chip ----------------------------------
-    const badgeW = 118, badgeX = 236, pulseB = .5 + .5*sin(HUD.t*2.2);
-    uiPanel(badgeX, 14, badgeW, 54, alpha(accent, .4 + pulseB*.3), 14);
-    uiText('WORLD', badgeX + 16, 30, 10, alpha(C.dim, .9), { font: DATA.ui.font });
-    uiText(zag ? 'ZAG' : 'ZIG', badgeX + badgeW - 16, 44, 26, accent,
-        { align:'right', font: DATA.ui.font, style:'900',
-          lineWidth: 3, lineColor: alpha(C.bg, .8) });
+    if (compact) {
+        // Three small chips stay in a single row on phones.
+        const x0 = 12, gap = 6;
+        const logoW = Math.min(106, S.x*.34), logoH = 46;
+        const badgeW = Math.min(68, S.x*.22), badgeX = x0 + logoW + gap;
+        uiPanel(x0, 12, logoW, logoH, alpha(C.neon, .45), 12);
+        uiText('MUZIC', x0 + 9, 29, 15, C.ink, { font: DATA.ui.font, style:'900' });
+        uiText('SWITCH', x0 + 9, 45, 9, C.cyan, { font: DATA.ui.font, style:'900' });
+
+        uiPanel(badgeX, 12, badgeW, logoH, alpha(accent, .4 + pulseB*.3), 12);
+        uiText('WORLD', badgeX + badgeW/2, 25, 8, alpha(C.dim, .9), { align:'center', font: DATA.ui.font });
+        uiText(zag ? 'ZAG' : 'ZIG', badgeX + badgeW/2, 43, 17, accent,
+            { align:'center', font: DATA.ui.font, style:'900', lineWidth: 2, lineColor: alpha(C.bg, .8) });
+
+        if (selectedSong) {
+            uiPanel(12, 66, S.x - 24, 48, alpha(accent, .38), 12);
+            uiText('NEXT STAGE  ' + selectedSong.id, 22, 82, 9, alpha(C.dim, .95), { font: DATA.ui.font });
+            uiText('BEST ' + String(best).padStart(6, '0'), S.x - 22, 82, 9, C.gold,
+                { align:'right', font: DATA.ui.font, style:'900' });
+            uiText(selectedSong.name, 22, 101, 13, C.ink,
+                { font: DATA.ui.font, style:'900', maxWidth: S.x - 46 });
+        }
+    } else {
+        // ---- logo chip, top left --------------------------------------------
+        uiPanel(16, 14, 208, 54, alpha(C.neon, .45), 14);
+        uiText('MUZIC', 34, 32, 20, C.ink, { font: DATA.ui.font, style:'900' });
+        uiText('SWITCH', 34, 52, 12, C.cyan, { font: DATA.ui.font, style:'900' });
+        uiZig([vec2(150, 26), vec2(162, 38), vec2(174, 26), vec2(186, 38), vec2(198, 26)],
+            2.5, alpha(C.neon, .8));
+
+        // ---- world badge, beside the logo chip ------------------------------
+        const badgeW = 118, badgeX = 236;
+        uiPanel(badgeX, 14, badgeW, 54, alpha(accent, .4 + pulseB*.3), 14);
+        uiText('WORLD', badgeX + 16, 30, 10, alpha(C.dim, .9), { font: DATA.ui.font });
+        uiText(zag ? 'ZAG' : 'ZIG', badgeX + badgeW - 16, 44, 26, accent,
+            { align:'right', font: DATA.ui.font, style:'900',
+              lineWidth: 3, lineColor: alpha(C.bg, .8) });
+
+        if (selectedSong) {
+            const sw = Math.min(340, S.x*.42), sx = S.x - sw - 16;
+            uiPanel(sx, 14, sw, 54, alpha(accent, .38), 14);
+            uiText('NEXT STAGE  ' + selectedSong.id, sx + 16, 31, 11, alpha(C.dim, .95), { font: DATA.ui.font });
+            uiText(selectedSong.name, sx + 16, 51, 16, C.ink, { font: DATA.ui.font, style:'900', maxWidth: sw - 32 });
+            uiText('PAGE UP / DOWN TO SELECT', sx + sw - 2, 79, 10, alpha(C.dim, .72), { align:'right', font: DATA.ui.soft });
+        }
+
+        // ---- best, top right or below the stage chip ------------------------
+        const bw = 172, bestY = selectedSong ? 80 : 14;
+        uiPanel(S.x - bw - 16, bestY, bw, 54, alpha(C.gold, .4), 14);
+        uiText('BEST', S.x - bw - 16 + 18, bestY + 18, 12, alpha(C.dim, .9), { font: DATA.ui.font });
+        uiText(String(best).padStart(6, '0'), S.x - 34, bestY + 36, 22, C.gold,
+            { align:'right', font: DATA.ui.font, style:'900' });
+    }
 
     // ---- world-shift banner -------------------------------------------------
     if (typeof owWorldSwitching == 'function' && owWorldSwitching())
@@ -270,25 +321,26 @@ function hudWorld()
             13, alpha(C.ink, .7), { align:'center', font: DATA.ui.soft });
     }
 
-    // ---- best, top right ----------------------------------------------------
-    const bw = 172;
-    uiPanel(S.x - bw - 16, 14, bw, 54, alpha(C.gold, .4), 14);
-    uiText('BEST', S.x - bw - 16 + 18, 32, 12, alpha(C.dim, .9), { font: DATA.ui.font });
-    uiText(String(best).padStart(6, '0'), S.x - 34, 50, 22, C.gold,
-        { align:'right', font: DATA.ui.font, style:'900' });
-
     // ---- control hints, bottom left (hidden while a dialog is up) -----------
     if (!talking)
     {
-        const hy = S.y - 72;
-        uiText('Move', 24, hy, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('WASD / ARROWS', 168, hy, 14, C.ink, { font: DATA.ui.font, style:'900' });
-        uiText('Switch world', 24, hy + 20, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('DOWN', 168, hy + 20, 14, accent, { font: DATA.ui.font, style:'900' });
-        uiText('Interact', 24, hy + 40, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('ENTER', 168, hy + 40, 14, C.cyan, { font: DATA.ui.font, style:'900' });
-        uiText('Menu', 24, hy + 60, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('ESC', 168, hy + 60, 14, alpha(C.ink, .9), { font: DATA.ui.font, style:'900' });
+        if (compact) {
+            const hy = S.y - 54, fs = 10;
+            uiText('MOVE  WASD / ARROWS', 12, hy, fs, C.ink, { font: DATA.ui.font, style:'800', maxWidth:S.x*.58 });
+            uiText('SWITCH  DOWN', S.x - 12, hy, fs, accent, { align:'right', font: DATA.ui.font, style:'800', maxWidth:S.x*.38 });
+            uiText('INTERACT  ENTER', 12, hy + 20, fs, C.cyan, { font: DATA.ui.font, style:'800', maxWidth:S.x*.48 });
+            uiText('PAUSE  ESC', S.x - 12, hy + 20, fs, alpha(C.ink,.9), { align:'right', font: DATA.ui.font, style:'800', maxWidth:S.x*.38 });
+        } else {
+            const hy = S.y - 72;
+            uiText('Move', 24, hy, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+            uiText('WASD / ARROWS', 168, hy, 14, C.ink, { font: DATA.ui.font, style:'900' });
+            uiText('Switch world', 24, hy + 20, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+            uiText('DOWN', 168, hy + 20, 14, accent, { font: DATA.ui.font, style:'900' });
+            uiText('Interact', 24, hy + 40, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+            uiText('ENTER', 168, hy + 40, 14, C.cyan, { font: DATA.ui.font, style:'900' });
+            uiText('Menu', 24, hy + 60, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+            uiText('ESC', 168, hy + 60, 14, alpha(C.ink, .9), { font: DATA.ui.font, style:'900' });
+        }
     }
 
     // ---- the portal prompt --------------------------------------------------
@@ -318,22 +370,31 @@ function hudWorld()
 function hudPlay()
 {
     const S = mainCanvasSize, C = DATA.c;
+    const compact = S.x < 600;
 
     // ---- score, top left ----------------------------------------------------
-    const pw = Math.min(250, S.x*.3), px = 18, py = 16;
-    uiPanel(px, py, pw, 74, alpha(C.cyan, .4), 16);
-    uiText('SCORE', px + 20, py + 22, 13, alpha(C.dim, .95), { font: DATA.ui.font });
-    uiText(String(Math.round(HUD.scoreShown)).padStart(6, '0'), px + pw - 18, py + 48, 30,
+    const pw = compact ? Math.min(160, S.x*.47) : Math.min(250, S.x*.3), px = compact ? 12 : 18, py = compact ? 12 : 16;
+    uiPanel(px, py, pw, compact ? 62 : 74, alpha(C.cyan, .4), 16);
+    uiText('SCORE', px + 12, py + 18, compact ? 10 : 13, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiText(String(Math.round(HUD.scoreShown)).padStart(6, '0'), px + pw - 12, py + 43, compact ? 22 : 30,
         C.ink, { align:'right', font: DATA.ui.font, style:'900' });
 
     // ---- progress, top centre -----------------------------------------------
-    const bw = Math.min(S.x*.36, 420), bx = S.x/2 - bw/2;
+    const bw = compact ? Math.min(S.x*.74, 420) : Math.min(S.x*.36, 420), bx = S.x/2 - bw/2;
     const total = chart ? clamp(songTime / chart.length) : 0;
-    uiText('ZIGZAG ETUDE', S.x/2, 26, 13, alpha(C.dim, .9),
+    uiText(chart && chart.title || 'DEMO PULSE', S.x/2, compact ? 101 : 26, compact ? 12 : 13, alpha(C.dim, .9),
         { align:'center', font: DATA.ui.font });
-    uiBar(bx, 40, bw, 10, total, C.neon, alpha(C.bg, .7));
+    const progressY = compact ? 118 : 40;
+    uiBar(bx, progressY, bw, 10, total, C.neon, alpha(C.bg, .7));
     for (let i = 1; i < 8; ++i)
-        drawRect(vec2(bx + bw*i/8, 45), vec2(1.5, 10), alpha(C.bg, .8), 0, true, true);
+        drawRect(vec2(bx + bw*i/8, progressY + 5), vec2(1.5, 10), alpha(C.bg, .8), 0, true, true);
+
+    // ---- health --------------------------------------------------------------
+    const hpW = compact ? Math.min(S.x*.72, 280) : Math.min(S.x*.22, 220), hpX = S.x/2 - hpW/2;
+    const hpY = compact ? 80 : 70;
+    uiText('HP  ' + Math.ceil(health), S.x/2, hpY - 5, compact ? 11 : 12,
+        health <= 25 ? C.bad : alpha(C.dim, .95), { align:'center', font: DATA.ui.font });
+    uiBar(hpX, hpY + 6, hpW, 8, health / 100, health <= 25 ? C.bad : C.cyan, alpha(C.bg, .7));
 
     // ---- combo, top right ---------------------------------------------------
     const cp = 1 + HUD.comboPop*.55;
@@ -357,8 +418,14 @@ function hudPlay()
     }
 
     // ---- hint ---------------------------------------------------------------
-    uiText('TAP NEAR THE LINE   ·   SPACE / ENTER', S.x/2, S.y - 22, 13,
+    uiText(fourLaneMode ? 'FOUR LANES   ·   D F J K   ·   MOUSE / TOUCH' : 'TAP NEAR THE LINE   ·   SPACE / ENTER', S.x/2, S.y - 22, 13,
         alpha(C.dim, .6), { align:'center', font: DATA.ui.soft });
+
+    if (stageNotice)
+        uiText(stageNotice, S.x/2, compact ? 145 : 96, 12, alpha(C.gold, .9), { align:'center', font: DATA.ui.soft, maxWidth: S.x*.85 });
+    if (window.ZIGZAG_EDITOR_MODE && typeof playSimulation != 'undefined')
+        uiText('SIM ' + Math.round(playSimulation.measuredTPS) + ' / 240 TPS', S.x - 20, 96, 11,
+            alpha(C.cyan, .86), { align:'right', font: DATA.ui.font });
 
     uiFlash();
 }
@@ -380,7 +447,7 @@ function hudResults()
 
     uiPanel(x, y, w, h, alpha(C.neon, .55), 26);
 
-    const cleared = score > 0 && (counts[0] + counts[1]) > 0;
+    const cleared = !(playResult && playResult.failed) && score > 0 && (counts[0] + counts[1]) > 0;
     uiSpaced(cleared ? 'STAGE CLEAR' : 'STAGE MISS', S.x/2, y + 50*k,
         clamp(w*.115, 24, 46), cleared ? C.gold : C.bad, 4,
         { align:'center', font: DATA.ui.font, style:'900',

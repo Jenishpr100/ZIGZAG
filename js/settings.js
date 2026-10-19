@@ -1,11 +1,11 @@
-/* settings.js — persistent user settings (volume, seed, theme, toggles...).
+/* settings.js — persistent user settings (volume, timing, theme, toggles...).
    Also hosts the hidden Developer unlock: tapping the "Expert" button 5 times in Settings. */
 (function () {
   const Z = (window.ZZ = window.ZZ || {});
   const reduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
   const DEFAULTS = {
     master: 0.8, music: 0.8, sfx: 0.7, offset: 0,
-    seed: 'zigzag', difficulty: 'normal', theme: 'neon',
+    difficulty: 'normal', theme: 'neon',
     reducedMotion: reduce, shake: true, hitFx: true, practice: false,
     lastSong: null
   };
@@ -20,7 +20,7 @@
 
   /* Developer mode — hidden "Expert" button in Settings must be tapped 5 times.
      Flag lives in raw localStorage (not Z.Storage) under 'zigzag-dev' so other pages
-     (DevEdit.html) and lanes can read it without the Settings wrapper. */
+     the level editor and lanes can read it without the Settings wrapper. */
   const DEV_KEY = 'zigzag-dev';
   Z.Dev = {
     KEY: DEV_KEY,

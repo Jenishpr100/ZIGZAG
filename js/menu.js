@@ -19,8 +19,10 @@
     },
     init() {
       buildLogo(); buildSegments(); bindNav(); bindSongs(); bindSettings(); bindOverlays();
-      const last = Z.Songs.byId(S().lastSong); selected = last || Z.Songs.list[0] || null;
-      syncAll(); if (Z.Dev && Z.Dev.isUnlocked()) showDevEditButton(); M.go('menu');
+      const last = Z.Songs.byId(S().lastSong);
+      selected = last && (!Z.Game.canStartStage || Z.Game.canStartStage(last.id))
+        ? last : Z.Songs.list.find(sg => !Z.Game.canStartStage || Z.Game.canStartStage(sg.id)) || null;
+      syncAll(); if (Z.Dev && Z.Dev.isUnlocked()) showLevelEditorButton(); M.go('menu');
     },
     refreshAfterSongReload() { selected = Z.Songs.byId(S().lastSong) || Z.Songs.list[0] || null; renderSongs(); updatePlaySub(); }
   };
@@ -28,7 +30,8 @@
   /* ---------- title / nav ---------- */
   function buildLogo() {
     const l = $('#logo'); l.textContent = '';
-    'ZIGZAG'.split('').forEach(ch => { const s = document.createElement('span'); s.textContent = ch; l.appendChild(s); });
+    'MuZiC'.split('').forEach(ch => { const s = document.createElement('span'); s.textContent = ch; l.appendChild(s); });
+    const sub = document.createElement('span'); sub.className = 'logo-second'; sub.textContent = 'SWITCH'; l.appendChild(sub);
   }
   function bindNav() {
     $$('[data-go]').forEach(b => b.addEventListener('click', () => { Z.Audio.unlock(); Z.Audio.sfx('ui'); M.go(b.dataset.go); }));
@@ -38,7 +41,12 @@
     document.addEventListener('keydown', e => {
       if (current === 'game' || e.altKey || e.ctrlKey || e.metaKey) return;
       const t = e.target, tag = t.tagName;
-      if (e.key === 'Escape') { if (current !== 'menu' && !$('.overlay.on')) { M.go('menu'); } return; }
+      if (e.key === 'Escape') {
+        const overlay = $('.overlay.on');
+        if (overlay && overlay.id === 'ov-reset-progress') $('#reset-progress-cancel').click();
+        else if (current !== 'menu' && !overlay) M.go('menu');
+        return;
+      }
       if (tag === 'INPUT' && (t.type === 'text' || t.type === 'range')) { if (!(t.type === 'range' && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))) return; }
       if (tag === 'SELECT') return;
       const scope = $('.overlay.on') || $('.screen.active');
@@ -77,15 +85,19 @@
     const ul = $('#song-list'); ul.textContent = '';
     Z.Songs.list.forEach(sg => {
       const li = document.createElement('li'), b = document.createElement('button');
-      b.className = 'song'; b.dataset.id = sg.id; b.setAttribute('aria-current', selected && selected.id === sg.id);
+      const locked = Z.Game.canStartStage && !Z.Game.canStartStage(sg.id);
+      b.className = 'song' + (locked ? ' locked' : ''); b.dataset.id = sg.id;
+      b.setAttribute('aria-current', selected && selected.id === sg.id); b.disabled = !!locked;
       const id = document.createElement('span'); id.className = 'id'; id.textContent = '#' + sg.id;
       const nm = document.createElement('span'); nm.textContent = sg.name;
       const bp = document.createElement('span'); bp.className = 'bpm'; bp.textContent = sg.bpm + ' BPM';
+      if (locked) { const lock = document.createElement('span'); lock.className = 'stage-lock'; lock.textContent = 'LOCKED'; bp.appendChild(lock); }
       b.append(id, nm, bp); b.addEventListener('click', () => { selectSong(sg); });
       li.appendChild(b); ul.appendChild(li);
     });
     $('#song-empty').hidden = Z.Songs.list.length > 0;
-    $('#btn-start').disabled = $('#btn-preview').disabled = !selected;
+    const locked = !!(selected && Z.Game.canStartStage && !Z.Game.canStartStage(selected.id));
+    $('#btn-start').disabled = $('#btn-preview').disabled = !selected || locked;
     const n = Z.Songs.notices; $('#n-count').textContent = n.length; $('#bpm-src').textContent = Z.Songs.bpmSource;
     const nl = $('#notices'); nl.textContent = ''; n.forEach(x => { const li = document.createElement('li'); li.textContent = x; nl.appendChild(li); });
     $('.notices').open = n.length > 0 && !Z.Songs.list.length;
@@ -97,14 +109,15 @@
   }
   function updateDetail() {
     const sg = selected, d = S().difficulty;
+    const locked = !!(sg && Z.Game.canStartStage && !Z.Game.canStartStage(sg.id));
     $('#d-name').textContent = sg ? sg.name : 'No song selected';
     $('#d-id').textContent = sg ? sg.id : '—'; $('#d-bpm').textContent = sg ? sg.bpm : '—';
     $('#d-len').textContent = sg && sg.status === 'ok' ? fmtTime(sg.duration) : '—';
     const st = sg ? Z.Chart.estimateStars(sg.bpm, d) : 0;
     $('#d-stars').textContent = sg ? '★'.repeat(st) + '  ' + st + '/10' : '—';
-    const hs = sg && Z.Game.highScore(sg.id, d, S().seed);
+    const hs = sg && Z.Game.highScore(sg.id);
     $('#d-best').textContent = hs ? hs.score + ' (' + hs.grade + ')' : 'none yet';
-    $('#d-msg').textContent = '';
+    $('#d-msg').textContent = sg && locked ? 'Clear the previous stage to unlock this one.' : '';
     if (sg && sg.status === 'unknown') Z.Audio.probe(sg, (err, dur) => {
       if (selected !== sg) return;
       if (err) $('#d-msg').textContent = err; else $('#d-len').textContent = fmtTime(dur);
@@ -140,8 +153,9 @@
   }
   function startGame() {
     if (!selected) return M.go('songs');
+    if (Z.Game.canStartStage && !Z.Game.canStartStage(selected.id)) return;
     set('lastSong', selected.id); M.go('game');
-    Z.Game.start(selected, S().difficulty, S().seed || 'zigzag');
+    Z.Game.start(selected, S().difficulty);
   }
   function updatePlaySub() { $('#play-sub').textContent = selected ? '#' + selected.id + ' ' + selected.name : ''; }
 
@@ -152,9 +166,8 @@
       el.addEventListener('input', () => { set(k, mult === 100 ? el.value / 100 : +el.value); out.textContent = mult === 100 ? el.value + '%' : el.value + ' ms'; Z.Audio.applyVolume(); });
     });
     ['reducedMotion', 'shake', 'hitFx', 'practice'].forEach(k => $('#set-' + k).addEventListener('change', e => { set(k, e.target.checked); syncAll(); }));
-    $$('.seed-input').forEach(inp => inp.addEventListener('input', () => { set('seed', inp.value.trim() || 'zigzag'); syncAll(inp); }));
-    $$('.seed-rand').forEach(b => b.addEventListener('click', () => { set('seed', Z.Chart.randomSeed()); syncAll(); }));
     $('#btn-reset').addEventListener('click', () => { Z.Settings.reset(); syncAll(); });
+    $('#btn-reset-progress').addEventListener('click', () => { Z.Audio.sfx('ui'); setOverlay('reset-progress'); });
     bindDevUnlock();
   }
 
@@ -181,27 +194,24 @@
     b.addEventListener('click', () => {
       Z.Audio.unlock(); Z.Audio.sfx('ui');
       if (Z.Dev.isUnlocked()) { toast('Developer mode is already unlocked.'); return; }
-      if (Z.Dev.tap()) { toast('You are now a Developer'); sync(); showDevEditButton(); }
+      if (Z.Dev.tap()) { toast('You are now a Developer'); sync(); showLevelEditorButton(); }
       else toast('Expert ' + Z.Dev.taps + '/5');
     });
     panel.appendChild(b);
   }
-  function showDevEditButton() {
-    if ($('#btn-devedit')) return;
+  function showLevelEditorButton() {
+    if ($('#btn-level-editor')) return;
     const nav = $('#s-menu nav') || $('#s-menu .stack') || $('#s-menu'); if (!nav) return;
     const b = document.createElement('button');
-    b.className = 'btn'; b.id = 'btn-devedit'; b.textContent = 'DevLevelEdit';
-    b.addEventListener('click', () => { window.location.href = 'DevEdit.html'; });
+    b.className = 'btn'; b.id = 'btn-level-editor'; b.textContent = 'Level Editor';
+    b.addEventListener('click', () => { window.location.href = 'LevelEditor.html'; });
     nav.appendChild(b);
   }
-  function syncAll(skip) {
+  function syncAll() {
     const s = S();
     Z.applyTheme(s.theme); document.body.classList.toggle('reduce', s.reducedMotion);
     $$('.diff-seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.diff === s.difficulty));
     $$('.theme-seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.theme === s.theme));
-    $$('.seed-input').forEach(i => { if (i !== skip) i.value = s.seed; });
-    const num = '→ numeric ' + Z.Chart.seedToNumber(s.seed);
-    $('#seed-hint-songs').textContent = num; $('#seed-hint-settings').textContent = num;
     [['master', s.master * 100, '%'], ['music', s.music * 100, '%'], ['sfx', s.sfx * 100, '%'], ['offset', s.offset, ' ms']].forEach(([k, v, u]) => {
       const el = $('#set-' + k); el.value = Math.round(v); el.parentNode.querySelector('output').textContent = Math.round(v) + u;
     });
@@ -221,6 +231,15 @@
     $('#r-restart').addEventListener('click', () => { setOverlay(null); G.restart(); });
     $('#r-songs').addEventListener('click', () => M.go('songs')); $('#r-menu').addEventListener('click', () => M.go('menu'));
     $('#err-back').addEventListener('click', () => M.go('songs'));
+    $('#reset-progress-cancel').addEventListener('click', () => { Z.Audio.sfx('ui'); setOverlay(null); $('#btn-reset-progress').focus(); });
+    $('#reset-progress-confirm').addEventListener('click', () => {
+      if (!G.resetProgress || !G.resetProgress()) return;
+      const firstStage = Z.Songs.list.find(song => song.id === 1 && song.status !== 'error') || Z.Songs.list.find(song => song.id > 0 && Z.Game.canStartStage(song.id)) || null;
+      selected = firstStage;
+      if (selected) set('lastSong', selected.id);
+      renderSongs(); updatePlaySub();
+      Z.Audio.sfx('ui'); setOverlay(null); $('#btn-reset-progress').focus();
+    });
   }
   M.showOverlay = function (name, msg) {
     const G = Z.Game;
@@ -235,8 +254,8 @@
       $('#r-grade').textContent = G.failed ? 'F' : G.grade(acc);
       $('#r-score').textContent = G.score; $('#r-acc').textContent = (acc * 100).toFixed(2) + '%';
       $('#r-combo').textContent = G.maxCombo; $('#r-miss').textContent = G.counts[3];
-      $('#r-pgg').textContent = G.counts[0] + ' / ' + G.counts[1] + ' / ' + G.counts[2]; $('#r-seed').textContent = G.seed;
-      $('#r-best').textContent = G.failed ? '' : G.newBest ? 'New best for this song, difficulty and seed!' : (G.best ? 'Best: ' + G.best.score + ' (' + G.best.grade + ')' : '');
+      $('#r-pgg').textContent = G.counts[0] + ' / ' + G.counts[1] + ' / ' + G.counts[2];
+      $('#r-best').textContent = G.failed ? '' : G.newBest ? 'New best score for this stage!' : (G.best ? 'Best score: ' + G.best : '');
       setOverlay('results');
     }
   };

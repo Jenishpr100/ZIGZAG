@@ -1,0 +1,274 @@
+{
+  "version": 1,
+  "stage": 3,
+  "title": "Slow Drift",
+  "artist": "Original demo track",
+  "author": "ZIGZAG",
+  "song": "3-Slow Drift.mp3",
+  "bpm": 90,
+  "offsetMs": 0,
+  "difficulty": "normal",
+  "notes": [
+    {
+      "id": "stage3-auto-001",
+      "type": "click",
+      "lane": 3,
+      "time": 2667
+    },
+    {
+      "id": "stage3-auto-002",
+      "type": "click",
+      "lane": 2,
+      "time": 3334
+    },
+    {
+      "id": "stage3-auto-003",
+      "type": "click",
+      "lane": 3,
+      "time": 4001
+    },
+    {
+      "id": "stage3-auto-004",
+      "type": "click",
+      "lane": 1,
+      "time": 4668
+    },
+    {
+      "id": "stage3-auto-005",
+      "type": "click",
+      "lane": 2,
+      "time": 5335
+    },
+    {
+      "id": "stage3-auto-006",
+      "type": "click",
+      "lane": 1,
+      "time": 6002
+    },
+    {
+      "id": "stage3-auto-007",
+      "type": "hold",
+      "lane": 2,
+      "startTime": 6669,
+      "endTime": 8002
+    },
+    {
+      "id": "stage3-auto-008",
+      "type": "click",
+      "lane": 0,
+      "time": 8669
+    },
+    {
+      "id": "stage3-auto-009",
+      "type": "click",
+      "lane": 2,
+      "time": 10002
+    },
+    {
+      "id": "stage3-auto-010",
+      "type": "click",
+      "lane": 1,
+      "time": 10669
+    },
+    {
+      "id": "stage3-auto-011",
+      "type": "click",
+      "lane": 3,
+      "time": 12002
+    },
+    {
+      "id": "stage3-auto-012",
+      "type": "click",
+      "lane": 3,
+      "time": 12669
+    },
+    {
+      "id": "stage3-auto-013",
+      "type": "drag",
+      "lane": 2,
+      "startTime": 14002,
+      "endTime": 16002,
+      "path": [
+        {
+          "lane": 2,
+          "time": 14002
+        },
+        {
+          "lane": 3,
+          "time": 14669
+        },
+        {
+          "lane": 2,
+          "time": 15336
+        },
+        {
+          "lane": 1,
+          "time": 16002
+        }
+      ]
+    },
+    {
+      "id": "stage3-auto-014",
+      "type": "click",
+      "lane": 0,
+      "time": 18002
+    },
+    {
+      "id": "stage3-auto-015",
+      "type": "click",
+      "lane": 0,
+      "time": 18669
+    },
+    {
+      "id": "stage3-auto-016",
+      "type": "click",
+      "lane": 0,
+      "time": 20002
+    },
+    {
+      "id": "stage3-auto-017",
+      "type": "drag",
+      "lane": 0,
+      "startTime": 20669,
+      "endTime": 22002,
+      "path": [
+        {
+          "lane": 0,
+          "time": 20669
+        },
+        {
+          "lane": 1,
+          "time": 21335
+        },
+        {
+          "lane": 0,
+          "time": 22002
+        }
+      ]
+    },
+    {
+      "id": "stage3-auto-018",
+      "type": "click",
+      "lane": 1,
+      "time": 22669
+    },
+    {
+      "id": "stage3-auto-019",
+      "type": "click",
+      "lane": 1,
+      "time": 24002
+    },
+    {
+      "id": "stage3-auto-020",
+      "type": "drag",
+      "lane": 1,
+      "startTime": 24669,
+      "endTime": 26002,
+      "path": [
+        {
+          "lane": 1,
+          "time": 24669
+        },
+        {
+          "lane": 0,
+          "time": 25335
+        },
+        {
+          "lane": 1,
+          "time": 26002
+        }
+      ]
+    },
+    {
+      "id": "stage3-auto-021",
+      "type": "click",
+      "lane": 0,
+      "time": 26669
+    },
+    {
+      "id": "stage3-auto-022",
+      "type": "drag",
+      "lane": 2,
+      "startTime": 27336,
+      "endTime": 29336,
+      "path": [
+        {
+          "lane": 2,
+          "time": 27336
+        },
+        {
+          "lane": 1,
+          "time": 28002
+        },
+        {
+          "lane": 2,
+          "time": 28669
+        },
+        {
+          "lane": 1,
+          "time": 29336
+        }
+      ]
+    },
+    {
+      "id": "stage3-auto-023",
+      "type": "click",
+      "lane": 2,
+      "time": 30003
+    },
+    {
+      "id": "stage3-auto-024",
+      "type": "click",
+      "lane": 1,
+      "time": 30670
+    },
+    {
+      "id": "stage3-auto-025",
+      "type": "click",
+      "lane": 3,
+      "time": 31337
+    },
+    {
+      "id": "stage3-auto-026",
+      "type": "click",
+      "lane": 1,
+      "time": 32670
+    },
+    {
+      "id": "stage3-auto-027",
+      "type": "click",
+      "lane": 2,
+      "time": 33337
+    },
+    {
+      "id": "stage3-auto-028",
+      "type": "click",
+      "lane": 0,
+      "time": 34004
+    },
+    {
+      "id": "stage3-auto-029",
+      "type": "click",
+      "lane": 2,
+      "time": 34671
+    },
+    {
+      "id": "stage3-auto-030",
+      "type": "click",
+      "lane": 1,
+      "time": 36004
+    },
+    {
+      "id": "stage3-auto-031",
+      "type": "click",
+      "lane": 2,
+      "time": 37337
+    },
+    {
+      "id": "stage3-auto-032",
+      "type": "click",
+      "lane": 2,
+      "time": 38670
+    }
+  ]
+}

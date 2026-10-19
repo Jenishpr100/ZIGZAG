@@ -1,0 +1,11 @@
+# ZIGZAG song BPM list — plain text; this is NOT an image.
+# Format:  songID=BPM
+# Optional: songID=BPM,firstBeatSeconds   (# optional comment)
+# Blank lines and lines starting with # are ignored.
+# The copy in js/song-manifest.js is used when file access is blocked.
+1=120
+2=172
+3=90
+4=135
+5=108
+6=160
