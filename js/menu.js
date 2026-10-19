@@ -1,14 +1,56 @@
 /* menu.js — screens, song select, settings controls, overlays. Pure DOM; no framework. */
 (function () {
   const Z = (window.ZZ = window.ZZ || {});
-  const $ = (s, r) => (r || document).querySelector(s), $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  /* Inert stand-in so a missing node (partially-loaded page, stripped markup) can't
+     throw halfway through boot; on the real page every id here exists, so the OG
+     behaviour is unchanged. */
+  const BLANK = { textContent: '', value: '', checked: false, disabled: false, hidden: false,
+    className: '', dataset: {}, style: {}, children: [], open: false,
+    appendChild() { return BLANK; }, addEventListener() {}, removeEventListener() {},
+    setAttribute() {}, removeAttribute() {}, getAttribute() { return null; },
+    querySelector() { return BLANK; }, querySelectorAll() { return []; }, closest() { return null; },
+    focus() {}, click() {}, contains() { return false; } };
+  BLANK.parentNode = BLANK;          // settings markup walks up to the label wrapper
+  const $ = (s, r) => (r || document).querySelector(s) || BLANK, $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
   const S = () => Z.Settings.data, set = (k, v) => Z.Settings.set(k, v);
   let current = 'menu', selected = null;
 
+  /* ---------- LittleJS lane handoff ------------------------------------------
+     The rhythm gameplay moved to the LittleJS lane (js/littlejs-game.js), which owns
+     its own canvas and its own title->world->play->results state machine. Z.Game
+     (js/gameplay.js) is a no-op stub kept so this menu keeps loading, so "Play" has to
+     hand the screen over explicitly. Everything is feature-detected: with no lane
+     present the OG Z.Game path runs unchanged. */
+  let inLane = false;
+  const clamp01 = v => Math.max(0, Math.min(1, +v || 0));
+  function laneEnter(song) {
+    if (typeof Z.LaneMenuPlay !== 'function') return false;
+    let took = false;
+    try { took = Z.LaneMenuPlay(song) !== false; } catch (e) { console.warn('LittleJS lane handoff failed:', e && e.message); }
+    if (!took) return false;
+    inLane = true;
+    document.body.classList.add('zz-lane');   // css: hides #app so the engine canvas shows
+    return true;
+  }
+  function laneExit() {
+    if (!inLane) return;
+    inLane = false;
+    document.body.classList.remove('zz-lane');
+    if (typeof Z.LaneMenuExit === 'function') { try { Z.LaneMenuExit(); } catch (e) {} }
+  }
+  /* Push the persisted Master volume into the LittleJS mixer so the slider isn't a
+     no-op once the engine owns the audio. Guarded: littlejs.min.js may not be loaded. */
+  function applyLaneVolume() {
+    if (typeof setSoundVolume !== 'function') return;
+    const base = (typeof DATA !== 'undefined' && DATA && typeof DATA.volume === 'number') ? DATA.volume : 0.6;
+    try { setSoundVolume(clamp01(S().master) * base); } catch (e) {}
+  }
+
   const M = Z.Menu = {
     get current() { return current; },
+    get inLittleJs() { return inLane; },
     go(name) {
-      if (name !== 'game') { Z.Game.quit(); Z.Audio.stop(); setOverlay(null); $('#btn-preview').textContent = 'Preview'; }
+      if (name !== 'game') { Z.Game.quit(); Z.Audio.stop(); laneExit(); setOverlay(null); $('#btn-preview').textContent = 'Preview'; }
       $$('.screen').forEach(s => s.classList.toggle('active', s.id === 's-' + name));
       current = name;
       if (name === 'songs') { renderSongs(); }
@@ -20,7 +62,9 @@
     init() {
       buildLogo(); buildSegments(); bindNav(); bindSongs(); bindSettings(); bindOverlays();
       const last = Z.Songs.byId(S().lastSong); selected = last || Z.Songs.list[0] || null;
-      syncAll(); if (Z.Dev && Z.Dev.isUnlocked()) showDevEditButton(); M.go('menu');
+      syncAll(); applyLaneVolume();
+      if (Z.Dev && Z.Dev.isUnlocked()) showDevEditButton();
+      M.go('menu');
     },
     refreshAfterSongReload() { selected = Z.Songs.byId(S().lastSong) || Z.Songs.list[0] || null; renderSongs(); updatePlaySub(); }
   };
@@ -43,12 +87,13 @@
     // Arrow keys move focus between controls; Left/Right move within segmented groups.
     document.addEventListener('keydown', e => {
       if (current === 'game' || e.altKey || e.ctrlKey || e.metaKey) return;
-      const t = e.target, tag = t.tagName;
+      const t = e.target || BLANK, tag = t.tagName;
       if (e.key === 'Escape') { if (current !== 'menu' && !$('.overlay.on')) { M.go('menu'); } return; }
       if (tag === 'INPUT' && (t.type === 'text' || t.type === 'range')) { if (!(t.type === 'range' && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))) return; }
       if (tag === 'SELECT') return;
       const scope = $('.overlay.on') || $('.screen.active');
       const all = $$('button:not([disabled]), input:not([type=file]), summary', scope).filter(x => x.offsetParent !== null);
+      if (!all.length) return;                       // nothing focusable on this screen
       let i = all.indexOf(t);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault(); i = i < 0 ? 0 : (i + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length; all[i].focus();
@@ -146,7 +191,9 @@
   }
   function startGame() {
     if (!selected) return M.go('songs');
-    set('lastSong', selected.id); M.go('game');
+    set('lastSong', selected.id);
+    if (laneEnter(selected)) return;    // LittleJS lane took over the screen
+    M.go('game');
     Z.Game.start(selected, S().difficulty, S().seed || 'zigzag');
   }
   function updatePlaySub() { $('#play-sub').textContent = selected ? '#' + selected.id + ' ' + selected.name : ''; }
@@ -155,7 +202,7 @@
   function bindSettings() {
     [['master', 100], ['music', 100], ['sfx', 100], ['offset', 1]].forEach(([k, mult]) => {
       const el = $('#set-' + k), out = el.parentNode.querySelector('output');
-      el.addEventListener('input', () => { set(k, mult === 100 ? el.value / 100 : +el.value); out.textContent = mult === 100 ? el.value + '%' : el.value + ' ms'; Z.Audio.applyVolume(); });
+      el.addEventListener('input', () => { set(k, mult === 100 ? el.value / 100 : +el.value); out.textContent = mult === 100 ? el.value + '%' : el.value + ' ms'; Z.Audio.applyVolume(); applyLaneVolume(); });
     });
     ['reducedMotion', 'shake', 'hitFx', 'practice'].forEach(k => $('#set-' + k).addEventListener('change', e => { set(k, e.target.checked); syncAll(); }));
     $$('.seed-input').forEach(inp => inp.addEventListener('input', () => { set('seed', inp.value.trim() || 'zigzag'); syncAll(inp); }));
@@ -212,7 +259,7 @@
       const el = $('#set-' + k); el.value = Math.round(v); el.parentNode.querySelector('output').textContent = Math.round(v) + u;
     });
     ['reducedMotion', 'shake', 'hitFx', 'practice'].forEach(k => $('#set-' + k).checked = !!s[k]);
-    Z.Audio.applyVolume(); if (current === 'songs') updateDetail();
+    Z.Audio.applyVolume(); applyLaneVolume(); if (current === 'songs') updateDetail();
     if (Z.Game.resize) Z.Game.resize();
   }
 

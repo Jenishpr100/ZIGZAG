@@ -4,20 +4,32 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--body);-webkit-tap-highlight-color:transparent}
 body{background:linear-gradient(160deg,var(--bg),var(--bg2));transition:background .4s}
-#app{position:fixed;inset:0}
+/* LittleJS (littlejs.min.js) prepends inline styles to <body> — including
+   touch-action:none — which kills touch scrolling on phones. The DOM menu needs it back;
+   the lane keeps touch-action:none so lane-drags never scroll the page. */
+html,body{touch-action:auto!important}
+body.zz-lane,body.zz-lane *{touch-action:none!important}
+/* #app sits above the engine canvas (both are positioned, and LittleJS appends its
+   canvas last, which would otherwise paint over the whole OG menu). When the menu hands
+   the screen to the LittleJS lane it sets body.zz-lane and the DOM UI steps aside. */
+#app{position:fixed;inset:0;z-index:1}
+body.zz-lane #app,body.zz-lane .overlay{display:none}
 code,kbd{font-family:Consolas,monospace;background:rgba(255,255,255,.12);padding:1px 6px;border-radius:4px}
 :focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
 
-/* screens fade + slide; hidden ones are inert */
-.screen{position:absolute;inset:0;padding:max(20px,env(safe-area-inset-top)) 20px 20px;overflow-y:auto;opacity:0;visibility:hidden;transform:translateX(24px) skewX(-2deg);
+/* screens fade + slide; hidden ones are inert. Every screen scrolls, safe-area aware. */
+.screen{position:absolute;inset:0;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+  padding:max(20px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
+  opacity:0;visibility:hidden;transform:translateX(24px) skewX(-2deg);
   transition:opacity .28s,transform .28s,visibility 0s .28s}
 .screen.active{opacity:1;visibility:visible;transform:none;transition:opacity .28s,transform .28s}
 #s-game{padding:0;overflow:hidden;transform:none}
 #game{width:100%;height:100%;display:block;cursor:pointer}
-.pause-btn{position:absolute;top:12px;right:12px}
+.pause-btn{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right))}
 
-/* title: letters zigzag up and down */
-.logo{margin:6vh 0 0;font:900 clamp(56px,15vw,140px)/1 var(--display);letter-spacing:-.02em;text-align:center;font-style:italic}
+/* title: letters zigzag up and down. Sized so the 14-character logo fits the viewport —
+   the letters are non-breaking spans, so the whole word must fit on one line. */
+.logo{margin:6vh 0 0;font:900 clamp(24px,7.8vw,116px)/1 var(--display);letter-spacing:-.02em;text-align:center;font-style:italic}
 .logo span{display:inline-block;color:var(--text);text-shadow:0 0 28px var(--accent)}
 .logo span:nth-child(odd){transform:translateY(-.12em);color:var(--accent)}
 .logo span:nth-child(even){transform:translateY(.12em);color:var(--accent2);text-shadow:0 0 28px var(--accent2)}
@@ -29,7 +41,7 @@ code,kbd{font-family:Consolas,monospace;background:rgba(255,255,255,.12);padding
 .btn:hover{background:rgba(255,255,255,.2)} .btn:active{transform:scale(.97)}
 .btn.big{background:var(--accent);color:#120a22;border-color:var(--accent);font-size:1.25rem;font-weight:900}
 .btn.big:hover{filter:brightness(1.1)}
-.btn.mini{padding:.5em 1em;min-height:40px;font-size:.9rem}
+.btn.mini{padding:.5em 1em;min-height:44px;font-size:.9rem}
 .btn small{font-weight:600;opacity:.75;margin-left:.5em;font-size:.7em}
 .btn[aria-pressed=true]{background:var(--accent2);color:#08121a;border-color:var(--accent2)}
 .stack{display:flex;flex-direction:column;gap:12px;max-width:360px;margin:0 auto}
@@ -43,7 +55,7 @@ code,kbd{font-family:Consolas,monospace;background:rgba(255,255,255,.12);padding
 .panel{background:var(--panel);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:18px;max-width:1000px;margin:0 auto 14px;backdrop-filter:blur(6px)}
 .songs-grid{display:grid;grid-template-columns:minmax(240px,1fr) 1.3fr;gap:14px;max-width:1000px;margin:0 auto}
 .songs-grid .panel{margin:0}
-.song-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto}
+.song-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .song{width:100%;text-align:left;display:flex;gap:10px;align-items:center;font:600 1rem var(--body);color:var(--text);background:rgba(255,255,255,.06);border:2px solid transparent;border-left:6px solid transparent;padding:10px 12px;min-height:48px;cursor:pointer;border-radius:6px}
 .song:hover{background:rgba(255,255,255,.12)}
 .song[aria-current=true]{border-color:var(--accent);border-left-color:var(--accent);background:rgba(255,255,255,.14)}
@@ -56,14 +68,14 @@ code,kbd{font-family:Consolas,monospace;background:rgba(255,255,255,.12);padding
 .lbl{display:block;margin:12px 0 6px;color:var(--dim);font-size:.9rem} .hint{opacity:.7;font-size:.8rem;margin-left:6px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0} .row.wrap{justify-content:center}
 input[type=text]{flex:1;min-width:140px;font:600 1rem var(--body);color:var(--text);background:rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.25);border-radius:6px;padding:10px 12px;min-height:44px}
-input[type=range]{flex:1;accent-color:var(--accent);min-width:120px;min-height:32px}
+input[type=range]{flex:1;accent-color:var(--accent);min-width:120px;min-height:44px}
 #theme-preview{width:100%;height:90px;border-radius:8px;margin:10px 0;display:block}
 .note{color:var(--dim);font-size:.9rem;margin:.5em 0}
 .notices summary{cursor:pointer;font-weight:700} .notices ul{padding-left:20px;color:var(--dim);font-size:.9rem}
 .form .field{display:flex;gap:12px;align-items:center;margin:10px 0;flex-wrap:wrap}
 .form .field output{min-width:48px;text-align:right}
 .field{justify-content:space-between}
-.check{display:flex;gap:10px;align-items:center;margin:12px 0;min-height:36px;cursor:pointer}
+.check{display:flex;gap:10px;align-items:center;margin:12px 0;min-height:44px;cursor:pointer}
 .check input{width:22px;height:22px;accent-color:var(--accent)}
 .how p,.how li{line-height:1.55;max-width:70ch} .how h4{margin:1.4em 0 .4em;font:800 1.1rem var(--display)} .keys{padding-left:20px}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
@@ -80,7 +92,28 @@ input[type=range]{flex:1;accent-color:var(--accent);min-width:120px;min-height:3
 .grade{font:900 clamp(64px,18vw,110px)/1 var(--display);font-style:italic;color:var(--accent);text-shadow:0 0 30px var(--accent)}
 .results .facts{text-align:left}
 
-@media (max-width:760px){.songs-grid{grid-template-columns:1fr}.song-list{max-height:34vh}}
-@media (max-height:520px){.logo{margin-top:1vh}.tag{margin-bottom:.8em}}
+/* ---------- phones: single column, roomier tap targets, everything scrolls ---------- */
+@media (max-width:760px){
+  .songs-grid{grid-template-columns:1fr}
+  /* nested scrollers fight the thumb — let the whole screen scroll instead */
+  .song-list{max-height:none;overflow-y:visible}
+  .panel{padding:14px;border-radius:9px}
+  .bar{gap:10px;margin-bottom:10px}
+  .bar h2{font-size:1.3rem}
+  .stack{max-width:100%;gap:14px}
+  #s-menu .stack .btn:nth-child(odd){transform:translateX(-8px)}
+  #s-menu .stack .btn:nth-child(even){transform:translateX(8px)}
+  .themebar{gap:10px;margin-top:1.4em;font-size:.95rem}
+  .row{gap:8px}
+  .row .btn{flex:1 1 auto}
+  .facts{grid-template-columns:repeat(auto-fit,minmax(96px,1fr))}
+  .cards{grid-template-columns:1fr}
+  .cards svg{height:74px}
+  .how p,.how li{max-width:none}
+  .overlay{padding:12px}
+  .card{padding:16px}
+  .grade{font-size:clamp(56px,22vw,96px)}
+}
+@media (max-height:520px){.logo{margin-top:1vh}.tag{margin-bottom:.8em}.stack{gap:8px}.themebar{margin-top:1em}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 body.reduce *{transition:none!important}
