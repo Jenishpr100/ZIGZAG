@@ -17,10 +17,11 @@ const DATA = {
     beatsPerNote: 0.5,      // one tap every half beat
     noteCount: 24,          // demo chart length
     fallTime: 1.5,          // seconds a note takes to reach the judge line
-    laneX: [-3, 3],         // world x of the two lanes — the two sides of the zigzag
+    laneX: [-3, 3],         // world x of the two lanes (legacy — the bands stack in y now)
+    laneY: [-2.5, 2.5],     // world y of the two lanes — BOTTOM lower band, TOP upper band
     laneColor: ['#2ff3ff', '#ff2e88'],
-    lineY: -5,              // judge line world y
-    topY: 7,                // where notes spawn
+    lineY: -5,              // judge line world y (legacy — each band has its own hit line)
+    topY: 7,                // where notes spawn (legacy — notes fall to their band line)
     // windows in seconds; the last entry is the catch-all MISS
     judgments: [
         { name: 'PERFECT', window: 0.060, score: 100, color: '#ffe98a' },
@@ -150,7 +151,6 @@ const DATA = {
         accel: 90,          // how quickly you reach it
         friction: 26,       // how quickly you stop
         radius: 0.32,       // player collision radius
-        zigLeg: 0.45,       // minimum length of one zigzag leg toward the cursor
         portalRange: 1.05,  // walk inside this to drop into the stage
         portalPrompt: 3.6,  // show the "press to enter" prompt inside this
         seed: 20261018,
@@ -165,6 +165,35 @@ const DATA = {
         soft:  '"Trebuchet MS", Verdana, sans-serif',
         mono:  '"Courier New", ui-monospace, monospace',
     },
+};
+
+// ---------------------------------------------------------------------------
+// player-facing progression state
+//
+// `window.playerState` is the single place the HUD reads hp / maxHp / level
+// from, so the world HUD, the inventory panel and battle.js can never drift
+// apart. js/hud.js mirrors the live battle hp back onto it every frame.
+// ---------------------------------------------------------------------------
+// guard: data.js is also loaded by headless harnesses that have no `window`
+if (typeof window != 'undefined')
+    window.playerState = window.playerState || {
+        hp: 100, maxHp: 100, level: 1, exp: 0,
+    };
+
+// Starter inventory — there is no persistent inventory system yet, so the
+// panel renders from this hardcoded seed (battle.js still keeps its own
+// weapon/item list; both read the same shape).
+//   weapons: { id, name, atk, power (alias), desc }
+//   items:   { id, name, qty, desc }
+DATA.playerInventory = DATA.playerInventory || {
+    weapons: [
+        { id: 'static_blade', name: 'Static Blade', atk: 10, power: 10,
+          desc: 'Blade forged from a dead carrier wave.' },
+    ],
+    items: [
+        { id: 'potion', name: 'Potion', qty: 1, desc: 'Restores 30 HP.' },
+        { id: 'ether',  name: 'Ether',  qty: 1, desc: 'Restores 10 SP.' },
+    ],
 };
 
 // resolve the palette once into real Color objects the engine can draw with

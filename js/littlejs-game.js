@@ -22,8 +22,8 @@ let pendingState = null;
 let muted = false;
 
 // ---- play-state ------------------------------------------------------------
-let activeLane = 'bottom';              // 'bottom' (blue, left) | 'top' (orange, right)
-let laneFlash = { top: 0, bottom: 0, center: 0 };   // per-column hit glow
+let activeLane = 'bottom';              // 'bottom' (blue, lower band) | 'top' (orange, upper band)
+let laneFlash = { top: 0, bottom: 0, center: 0 };   // per-band hit glow
 let laneSwapPulse = 0;                  // little kick when DOWN swaps lanes
 let songMeta = { title: '', artist: '' };
 let playResult = null;                  // last-run summary for the results screen
@@ -73,11 +73,11 @@ const WARDENS = {
 
 // tunables for the stage (kept here so data.js stays untouched)
 const PLAY = {
-    fallTime: 1.6,          // seconds a note takes from spawn to the hit line
-    lineY: -5,              // hit line world y (near centre-bottom of the view)
-    topY: 7,                // where notes spawn
+    fallTime: 1.6,          // seconds a note takes from spawn to its hit line
+    fallSpan: 6.5,          // world units a note drops from spawn down to its band line
+    bandHeight: 2.2,        // height of one lane band (the bands stack, they don't sit side by side)
+    bandWidth: 11.5,        // width of the play field the bands span
     hitWindow: .15,         // outer judgment window; finer grades from DATA.judgments
-    laneWidth: 4.8,         // width of one lane column
     countdown: 2.2,         // lead-in seconds before songTime hits 0
     colors: {
         top:      '#ff9a2e',   // orange neon (TOP lane)
@@ -87,9 +87,12 @@ const PLAY = {
     },
 };
 
-// lane column world-x: bottom on the left, top on the right, center between
-const laneX = lane => lane == 'top' ? DATA.laneX[1]
-                    : lane == 'bottom' ? DATA.laneX[0] : 0;
+// the two lanes are stacked VERTICALLY: TOP rides the upper band of the play
+// field, BOTTOM the lower band, and CENTER sits between them. DATA.laneY is
+// [bottom, top]; a missing entry falls back to these defaults.
+const LANE_Y = DATA.laneY || [-2.5, 2.5];
+const laneY = lane => lane == 'top' ? LANE_Y[1]
+                    : lane == 'bottom' ? LANE_Y[0] : 0;
 
 // theme-aware lane color (themes.js may override via ZZ.theme.laneTop/laneBottom)
 function playLaneColor(lane)
@@ -100,9 +103,11 @@ function playLaneColor(lane)
     return col(PLAY.colors.center);
 }
 
-// world y of a note whose chart time is t (scrolls top → bottom toward the line)
-const noteY = t => lerp(PLAY.topY, PLAY.lineY,
-    clamp(1 - (t - songTime) / PLAY.fallTime, 0, 1.3));
+// world y of a note in `lane` whose chart time is t: it falls from above its
+// band, down through the band, and crosses that band's horizontal hit line
+// at laneY(lane) exactly on the beat
+const noteY = (t, lane) => laneY(lane) + PLAY.fallSpan *
+    clamp((t - songTime) / PLAY.fallTime, -0.3, 1);
 
 const r3 = x => Math.round(x * 1000) / 1000;
 
@@ -596,7 +601,7 @@ function judgeUnit(q, note, silent)
         {
             note.hitFlash = 1;
             laneFlash[note.lane] = 1;
-            spawnBurst(note.pos.x, Math.max(note.pos.y, PLAY.lineY), playLaneColor(note.lane));
+            spawnBurst(note.pos.x, note.pos.y, playLaneColor(note.lane));
         }
         flash = Math.max(flash, q === 0 ? .35 : .2);
         shake = Math.max(shake, q === 0 ? .1 : .05);
@@ -609,7 +614,7 @@ function judgeUnit(q, note, silent)
         {
             note.missFlash = 1;
             laneFlash[note.lane] = Math.max(laneFlash[note.lane], .5);
-            spawnBurst(note.pos.x, PLAY.lineY, col(PLAY.colors.miss));
+            spawnBurst(note.pos.x, laneY(note.lane), col(PLAY.colors.miss));
         }
         flash = Math.max(flash, .25);
         shake = Math.max(shake, .12);
@@ -944,7 +949,7 @@ class PlayNote extends EngineObject
 {
     constructor(n)
     {
-        super(vec2(laneX(n.lane), PLAY.topY), vec2(2.2, 2.2), undefined, 0, WHITE, 10);
+        super(vec2(0, laneY(n.lane) + PLAY.fallSpan), vec2(2.2, 2.2), undefined, 0, WHITE, 10);
         this.t = n.t;
         this.lane = n.lane;                 // 'top' | 'bottom' | 'center'
         this.type = n.type;                 // 'tap' | 'hold'
@@ -966,10 +971,10 @@ class PlayNote extends EngineObject
         this.missFlash = Math.max(0, this.missFlash - timeDelta*3);
         this.flickFlash = Math.max(0, this.flickFlash - timeDelta*5);
 
-        // scroll position — an active hold pins its head to the hit line
-        let y = noteY(this.t);
-        if (this.state == 'holding') y = Math.max(y, PLAY.lineY);
-        this.pos.x = laneX(this.lane);
+        // scroll position — an active hold pins its head to its band's hit line
+        let y = noteY(this.t, this.lane);
+        if (this.state == 'holding') y = Math.max(y, laneY(this.lane));
+        this.pos.x = 0;
         this.pos.y = y;
 
         if (this.state == 'pending')
@@ -1025,7 +1030,7 @@ class PlayNote extends EngineObject
         if (gone && this.hitFlash <= .01 && this.missFlash <= .01) return;
         if (this.state == 'pending' && this.t + this.dur - songTime > PLAY.fallTime + .1) return;
 
-        const C = DATA.c, x = this.pos.x;
+        const C = DATA.c, x = this.pos.x, hitY = laneY(this.lane);
         const mine = this.lane == 'center' || this.lane == activeLane;
         const base = playLaneColor(this.lane);
         const dim = base.scale(.25);                        // dark when the lane is off
@@ -1035,7 +1040,7 @@ class PlayNote extends EngineObject
 
         if (this.type == 'tap')
         {
-            const p = vec2(x, noteY(this.t));
+            const p = vec2(x, noteY(this.t, this.lane));
             const hot = clamp(1 - Math.abs(songTime - this.t)*2.2, 0, 1);
 
             setAdditiveBlendMode(true);
@@ -1056,9 +1061,9 @@ class PlayNote extends EngineObject
         }
         else // hold: an elongated bar + head cap + ↑ flick arrows
         {
-            const yHead = this.state == 'holding' ? Math.max(noteY(this.t), PLAY.lineY)
-                                                  : noteY(this.t);
-            const yTail = noteY(this.endTime);
+            const yHead = this.state == 'holding' ? Math.max(noteY(this.t, this.lane), hitY)
+                                                  : noteY(this.t, this.lane);
+            const yTail = noteY(this.endTime, this.lane);
             const h = Math.max(.25, yHead - yTail);
             const mid = vec2(x, (yHead + yTail) * .5);
 
@@ -1083,7 +1088,7 @@ class PlayNote extends EngineObject
             for (const f of this.flicks)
             {
                 if (f.done) continue;
-                const p = vec2(x, noteY(f.t));
+                const p = vec2(x, noteY(f.t, this.lane));
                 if (p.y > yHead + .3 || p.y < yTail - .3) continue;
                 const hot = clamp(1 - Math.abs(songTime - f.t)*2.2, 0, 1);
                 if (hot > .01)
@@ -1106,18 +1111,18 @@ class PlayNote extends EngineObject
             }
             else
             {
-                // held head pinned at the line, glowing brighter while held
+                // held head pinned at the band line, glowing brighter while held
                 setAdditiveBlendMode(true);
-                drawRect(vec2(x, PLAY.lineY), vec2(w + 1.2, 1.9), alpha(c, .14 + .06*sin(time*8)));
+                drawRect(vec2(x, hitY), vec2(w + 1.2, 1.9), alpha(c, .14 + .06*sin(time*8)));
                 setAdditiveBlendMode(false);
-                drawRect(vec2(x, PLAY.lineY), vec2(w, 1.2), alpha(C.ink, .9));
-                drawRect(vec2(x, PLAY.lineY), vec2(w*.7, .9), c);
+                drawRect(vec2(x, hitY), vec2(w, 1.2), alpha(C.ink, .9));
+                drawRect(vec2(x, hitY), vec2(w*.7, .9), c);
             }
         }
 
         // hit = white flash, miss = red flash
         const p = vec2(x, this.type == 'hold' && this.state == 'holding'
-            ? PLAY.lineY : noteY(this.t));
+            ? hitY : noteY(this.t, this.lane));
         if (this.hitFlash > .01)
         {
             setAdditiveBlendMode(true);
@@ -1140,7 +1145,8 @@ class PlayNote extends EngineObject
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// the stage: backdrop, the two lane columns, the hit line, the countdown
+// the stage: backdrop, the two stacked lane bands, the per-band hit lines,
+// the countdown
 ///////////////////////////////////////////////////////////////////////////////
 
 function renderStage()
@@ -1150,65 +1156,70 @@ function renderStage()
     // backdrop
     drawRectGradient(vec2(S.x/2, S.y/2), S, C.bgTop, C.bgBot, 0, true, true);
 
-    const colH = PLAY.topY - PLAY.lineY + 5;
-    const colMid = (PLAY.topY + PLAY.lineY) * .5;
+    const bandW = PLAY.bandWidth, bandH = PLAY.bandHeight;
 
-    // ---- lane columns: bright when active, dark when not -------------------
+    // ---- lane bands: bright when active, dark when not ---------------------
     for (const lane of ['bottom', 'top'])
     {
-        const x = laneX(lane), on = activeLane == lane;
+        const y = laneY(lane), on = activeLane == lane;
         const base = playLaneColor(lane);
         const fl = laneFlash[lane];
 
-        // column bed
-        drawRect(vec2(x, colMid), vec2(PLAY.laneWidth, colH),
+        // the band bed — a horizontal strip across the whole play field
+        drawRect(vec2(0, y), vec2(bandW, bandH),
             alpha(base, (on ? .085 : .03) + fl*.1));
 
-        // edge rails
+        // edge rails along the top and bottom of the band
         for (const s of [-1, 1])
-            drawRect(vec2(x + s*PLAY.laneWidth*.5, colMid), vec2(.07, colH),
+            drawRect(vec2(0, y + s*bandH*.5), vec2(bandW, .07),
                 alpha(base, on ? .45 : .14));
 
-        // active-column glow at the hit zone
+        // active-band glow sitting on the band's hit line
         if (on)
         {
             setAdditiveBlendMode(true);
-            drawRect(vec2(x, PLAY.lineY + 1.4),
-                vec2(PLAY.laneWidth, 3.4 + laneSwapPulse*.7),
+            drawRect(vec2(0, y), vec2(bandW, bandH*1.35 + laneSwapPulse*.7),
                 alpha(base, .06 + .035*sin(time*3) + fl*.22 + laneSwapPulse*.1));
             setAdditiveBlendMode(false);
         }
     }
 
-    // faint centre column (CENTER notes live here; either lane can hit them)
-    drawRect(vec2(0, colMid), vec2(2.0, colH), alpha(playLaneColor('center'), .035));
+    // faint centre band (CENTER notes live here; either lane can hit them)
+    drawRect(vec2(0, laneY('center')), vec2(bandW, bandH*.72),
+        alpha(playLaneColor('center'), .035));
 
-    // ---- the hit line ------------------------------------------------------
-    const p = judgeLinePulse, w = 11.5;
-    drawRect(vec2(0, PLAY.lineY), vec2(w, .5 + p*.25), alpha(C.neon, .1 + p*.2));
-    drawRect(vec2(0, PLAY.lineY), vec2(w, .16), alpha(C.ink, .55 + p*.45));
-    drawRect(vec2(0, PLAY.lineY), vec2(w, .05), C.ink);
-    for (const s of [-1, 1])
-        drawRegularPoly(vec2(s*(w/2 - .2), PLAY.lineY), vec2(.8 + p*.25), 4,
-            alpha(C.neon, .9), .07, C.ink, PI/4);
+    // ---- the hit lines: one horizontal line per band -----------------------
+    const p = judgeLinePulse;
+    for (const lane of ['bottom', 'center', 'top'])
+    {
+        const y = laneY(lane);
+        const lc = playLaneColor(lane);
+        const k = lane == 'center' ? .45 : (activeLane == lane ? 1 : .55);
+        drawRect(vec2(0, y), vec2(bandW, .5 + p*.25), alpha(C.neon, .1*k + p*.2));
+        drawRect(vec2(0, y), vec2(bandW, .16), alpha(C.ink, .5 + p*.45*k));
+        drawRect(vec2(0, y), vec2(bandW, .05), alpha(lc, k));
+        for (const s of [-1, 1])
+            drawRegularPoly(vec2(s*(bandW/2 - .2), y), vec2(.8 + p*.25), 4,
+                alpha(C.neon, .9*k), .07, C.ink, PI/4);
+    }
 
-    // ---- key hints under the line -----------------------------------------
+    // ---- key hints, tucked into the left of each band -----------------------
     for (const lane of ['bottom', 'top'])
     {
-        const on = activeLane == lane, base = playLaneColor(lane);
-        drawText(lane == 'top' ? 'TOP' : 'BOT', vec2(laneX(lane), PLAY.lineY - 1.2),
-            .5, alpha(base, on ? .95 : .4), .04, alpha(C.bg, .85), 'center', DATA.ui.font);
-        drawText('L R', vec2(laneX(lane), PLAY.lineY - 1.9), .36,
-            alpha(C.dim, on ? .8 : .35), 0, 0, 'center', DATA.ui.soft);
+        const y = laneY(lane), on = activeLane == lane, base = playLaneColor(lane);
+        drawText(lane == 'top' ? 'TOP' : 'BOT', vec2(-bandW*.5 + 1.1, y + .12),
+            .5, alpha(base, on ? .95 : .4), .04, alpha(C.bg, .85), 'left', DATA.ui.font);
+        drawText('L R', vec2(-bandW*.5 + 1.1, y - .64), .36,
+            alpha(C.dim, on ? .8 : .35), 0, 0, 'left', DATA.ui.soft);
     }
-    drawText('↓ SWAP', vec2(0, PLAY.lineY - 1.2), .42,
-        alpha(C.ink, .5 + laneSwapPulse*.45), .03, alpha(C.bg, .85), 'center', DATA.ui.font);
-    drawText('↑ FLICK', vec2(0, PLAY.lineY - 1.9), .32,
-        alpha(C.dim, .65), 0, 0, 'center', DATA.ui.soft);
+    drawText('↓ SWAP', vec2(bandW*.5 - 1.1, laneY('center') + .12), .42,
+        alpha(C.ink, .5 + laneSwapPulse*.45), .03, alpha(C.bg, .85), 'right', DATA.ui.font);
+    drawText('↑ FLICK', vec2(bandW*.5 - 1.1, laneY('center') - .62), .32,
+        alpha(C.dim, .65), 0, 0, 'right', DATA.ui.soft);
 
     // song title chip while the chart warms up
     if (songMeta.title && songTime < 2.6)
-        drawText(songMeta.title, vec2(0, 3.4), .85,
+        drawText(songMeta.title, vec2(0, 7.2), .85,
             alpha(C.ink, clamp(1.1 - Math.max(0, songTime)*.35)), .05, alpha(C.bg, .8),
             'center', DATA.ui.font);
 
@@ -1218,7 +1229,7 @@ function renderStage()
         const k = Math.ceil(-songTime + .2);
         const label = k > 0 ? String(Math.min(k, Math.ceil(PLAY.countdown))) : 'GO!';
         const pop = 1 - mod(-songTime + .2, 1);
-        drawText(label, vec2(0, 1.2), 1.6 + pop*.6, alpha(C.ink, .9), .1, C.bg,
+        drawText(label, vec2(0, 4.7), 1.6 + pop*.6, alpha(C.ink, .9), .1, C.bg,
             'center', DATA.ui.font);
     }
 }

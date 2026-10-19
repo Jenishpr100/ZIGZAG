@@ -37,6 +37,7 @@ const OW_STANDIN_HUES = ['#ffd76a', '#2ff3ff', '#ff2e88', '#7cff9b', '#c86bff'].
 
 let worldTiles, WORLD_W = 0, WORLD_H = 0;
 let portalPos = vec2(), owPortalActive = false;
+let owPortalObj = null;                  // the live Portal static (rendered in ZAG only)
 let player = null;
 const worldDecor = [];
 
@@ -150,6 +151,9 @@ function owSetWorld(world)
             .9, .2, .02, .07, .05, .9, 1, 0, PI, .35, .6, false, true);
         owTrackBurst(e);
     }
+    // the stage gate belongs to ZAG — flip it in place on a world switch
+    owSyncPortal();
+
     // ambient motes are baked at creation — respawn them in the new colors
     makeAmbient();
     return true;
@@ -985,6 +989,7 @@ class Portal extends EngineObject
     }
     render()
     {
+        if (!owPortalActive) return;      // the gate only opens in the ZAG world
         const C = DATA.c, P = owPal, p = this.pos, t = time + this.phase;
         const pulse = .5 + .5*sin(t*2.6);
         const near  = player && state == 'world'
@@ -1349,11 +1354,6 @@ class Player extends EngineObject
         this.moveAmt = 0;
         this.step = 0;
         this.bob = rand(0, 6.28);
-        this.trail = [];
-        this.zigTarget = null;
-        this.zigAxis = 0;      // 0 = walk x first, 1 = walk y first
-        this.zigLeg = 0;
-        this.zigBlocked = 0;
     }
 
     update()
@@ -1365,35 +1365,20 @@ class Player extends EngineObject
         if (owWarp || (typeof Dialog != 'undefined' && Dialog.isOpen()))
         {
             this.vel = vec2();
-            this.trail.length = 0;
-            this.zigTarget = null;
             this.moveAmt = Math.max(0, this.moveAmt - .3);
             return;
         }
 
-        // ---- input: arrows / WASD (S walks down, ArrowDown switches worlds) --
+        // ---- input: WASD only ----------------------------------------------
+        // the arrow keys belong to menus and to the DOWN world switch, so they
+        // never drive the player (LittleJS mirrors WASD onto them — hence the
+        // physical-key check in owArrowDownPhysical)
         let dir = vec2();
-        if (keyIsDown('ArrowLeft')  || keyIsDown('KeyA')) dir.x -= 1;
-        if (keyIsDown('ArrowRight') || keyIsDown('KeyD')) dir.x += 1;
-        if (keyIsDown('ArrowUp')    || keyIsDown('KeyW')) dir.y += 1;
-        if (keyIsDown('ArrowDown')  || keyIsDown('KeyS')) dir.y -= 1;
-
-        if (dir.length())
-        {
-            dir = dir.normalize();
-            this.zigTarget = null;
-            this.trail.length = 0;
-        }
-        else
-        {
-            // ---- input: mouse / touch drives a visible zig-zag staircase ----
-            if (mouseIsDown(0))
-            {
-                if (!this.zigTarget) { this.zigTarget = mousePos.copy(); this.zigLeg = 0; }
-                else this.zigTarget = mousePos.copy();
-            }
-            dir = this.zigStep(dt);
-        }
+        if (keyIsDown('KeyA')) dir.x -= 1;
+        if (keyIsDown('KeyD')) dir.x += 1;
+        if (keyIsDown('KeyW')) dir.y += 1;
+        if (keyIsDown('KeyS')) dir.y -= 1;
+        if (dir.length()) dir = dir.normalize();
 
         // ---- accelerate / coast -------------------------------------------
         const goal = dir.scale(W.speed);
@@ -1417,6 +1402,7 @@ class Player extends EngineObject
             this.facing = this.facing.lerp(dir, .3).normalize();
 
         // ---- the portal (talk / doors get the interact key first) -----------
+        // the portal only exists in the ZAG (play) world — in ZIG it is inert
         if (owPortalActive)
         {
             const d = this.pos.subtract(portalPos).length();
@@ -1425,74 +1411,12 @@ class Player extends EngineObject
             const press = keyWasPressed('Space') || keyWasPressed('Enter') || keyWasPressed('NumpadEnter');
             if (d < W.portalRange || (!busy && press) && d < W.portalPrompt)
                 enterStage();
-            else if (!busy && mouseWasPressed(0) && d < W.portalPrompt)
-                enterStage();
         }
-    }
-
-    // one leg of the staircase: hold an axis until aligned with the cursor, then flip
-    zigStep(dt)
-    {
-        const W = DATA.world;
-        if (!this.zigTarget) return vec2();
-        const d = this.zigTarget.subtract(this.pos);
-        if (d.length() < .2) { this.zigTarget = null; return vec2(); }
-
-        const ax = this.zigAxis ? 'y' : 'x';
-        if (Math.abs(d[ax]) < .1)
-        {
-            // reached this corner — record it so the trail draws a real zig-zag
-            if (this.zigLeg > W.zigLeg*.5)
-            {
-                this.trail.push(this.pos.copy());
-                if (this.trail.length > 20) this.trail.shift();
-            }
-            this.zigAxis = 1 - this.zigAxis;
-            this.zigLeg = 0;
-            this.zigBlocked = 0;
-        }
-        else if (Math.abs(this.vel[ax]) < .01 && Math.abs(d[ax]) > .2)
-        {
-            // pressed against a wall on this axis — take the other one instead
-            this.zigBlocked = (this.zigBlocked || 0) + dt;
-            if (this.zigBlocked > .18)
-            {
-                this.zigAxis = 1 - this.zigAxis;
-                this.zigLeg = 0;
-                this.zigBlocked = 0;
-            }
-        }
-        else
-            this.zigBlocked = 0;
-        this.zigLeg += W.speed*dt;
-
-        const ax2 = this.zigAxis ? 'y' : 'x';
-        return vec2(ax2 == 'x' ? Math.sign(d.x) : 0, ax2 == 'y' ? Math.sign(d.y) : 0);
     }
 
     render()
     {
         if (state != 'world') return;
-
-        // the glowing zig-zag the mouse just drew
-        if (this.trail.length > 1)
-        {
-            const pts = this.trail.concat([this.pos]);
-            drawLineList(pts, .26, alpha(DATA.c.cyan, .18));
-            drawLineList(pts, .1,  alpha(DATA.c.cyan, .55));
-            for (const q of this.trail) drawCircle(q, .12, alpha(DATA.c.neonSoft, .4));
-        }
-        // a dashed lead line to the cursor target
-        if (this.zigTarget)
-        {
-            const a = this.pos, b = this.zigTarget, n = 9;
-            for (let i = 0; i < n; i += 2)
-            {
-                const p0 = a.lerp(b, i/n), p1 = a.lerp(b, (i+1)/n);
-                drawLine(p0, p1, .05, alpha(DATA.c.neonSoft, .35));
-            }
-            drawEllipse(b, vec2(.55), alpha(DATA.c.bg, 0), 0, alpha(DATA.c.neon, .85));
-        }
 
         // spritesheet Teto when available, procedural Teto otherwise
         const frame = owTetoFrame(this.facing, this.step, this.moveAmt);
@@ -1619,7 +1543,43 @@ function owClearRoomObjects()
             if (o && !o.destroyed) o.destroy();
         arr.length = 0;
     }
+    owPortalObj = null;
+    owPortalActive = false;
     owNear = null;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// the stage portal — ZAG (play) world only
+//
+// A room may declare a `portal` tile, but that gate only opens in ZAG: standing
+// on it in the ZIG (real) world does nothing. owSyncPortal() rebuilds the tile
+// position from the live room and re-evaluates the live world, so a DOWN switch
+// inside a world:'both' room flips the portal in place.
+///////////////////////////////////////////////////////////////////////////////
+
+function owSyncPortal()
+{
+    const room = owRooms[owRoomId];
+    const has = !!(room && room.portal);
+
+    if (has)
+    {
+        portalPos = tileCenter(room.portal[0], room.portal[1]);
+        if (!owPortalObj || owPortalObj.destroyed)
+        {
+            owPortalObj = new Portal(portalPos);
+            owStatics.push(owPortalObj);
+        }
+        else
+            owPortalObj.pos = portalPos.copy();
+    }
+    else
+    {
+        owPortalObj = null;
+        portalPos = vec2(1e6, 1e6);
+    }
+
+    owPortalActive = has && currentWorld == 'zag';
 }
 
 /**
@@ -1654,9 +1614,9 @@ function owEnterRoom(id, spawn, facing)
         worldDecor.push(d);
         owStatics.push(new WorldDecor(d));
     }
-    owPortalActive = !!room.portal;
-    portalPos = owPortalActive ? tileCenter(room.portal[0], room.portal[1]) : vec2(1e6, 1e6);
-    if (owPortalActive) owStatics.push(new Portal(portalPos));
+    // the stage portal belongs to ZAG only — the ZIG mirror of the room is
+    // inert, so owPortalActive follows the live world, not just the room
+    owSyncPortal();
 
     // doors (+ a guard beside every still-locked one)
     for (const d of room.doors)
@@ -1680,8 +1640,6 @@ function owEnterRoom(id, spawn, facing)
     {
         player.pos = pos.copy();
         player.vel = vec2();
-        player.trail.length = 0;
-        player.zigTarget = null;
         if (facing && facing.length && facing.length() > .01)
             player.facing = facing.normalize().copy();
     }
@@ -1737,7 +1695,7 @@ function owBeginWarp(dr)
         return false;
     }
     if (typeof Dialog != 'undefined' && Dialog.isOpen()) Dialog.close();
-    if (player) { player.vel = vec2(); player.zigTarget = null; }
+    if (player) player.vel = vec2();
     dr.inside = true;
     owWarp = { t: 0, phase: 'out', door: dr.def, from: owRoomId };
     return true;
