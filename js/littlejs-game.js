@@ -698,6 +698,23 @@ window.ZZ.startBattle = function (enemyId, def)
     return true;
 };
 
+// OG DOM menu <-> engine handoff: menu.js calls these when the player picks
+// Play (or navigates back out), toggling body.zz-lane so the DOM screens step
+// aside for the LittleJS canvas.
+window.ZZ.LaneMenuPlay = function () {
+    audioUnlock();
+    flash = 1;
+    flashColor = DATA.c.ink;
+    setState('play');
+    return true;
+};
+window.ZZ.LaneMenuExit = function () {
+    audioUnlock();
+    flash = .6;
+    flashColor = DATA.c.cyan;
+    setState('title');
+};
+
 // the playerState object Battle mutates in place (hp / items / score written
 // back); persists across fights within the session, re-seeded from a shared
 // inventory if another lane provides ZZ.inventory
