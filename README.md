@@ -48,15 +48,7 @@ Times in `.level` files are milliseconds from the track start. Lanes are numbere
 
 ## Project map
 
-- `index.html` — game menus and help.
-- `js/littlejs-game.js` — game states, rhythm play, progression, and the bridge from the menu to LittleJS.
-- `js/overworld.js` — town, world switching, portals, people, and Warden gates.
-- `js/battle.js` — turn based Warden battles.
-- `js/chart-generator.js` — shared difficulty tuning and menu star estimates.
-- `js/levelEditor.js`, `LevelEditor.html` — stage recording and editing.
-- `levels/` — six ready to play stage charts.
-- `songs/` — the playable demo tracks; the manifest is `js/song-manifest.js`.
-- `server.mjs` — optional local helper for direct stage saving; static hosting does not use it.
+See [Project file guide](docs/PROJECT_STRUCTURE.md) for a folder map and a description of the files, including which files are generated and which are used by the game, editor, and build tools.
 
 ## Credits and release notes
 
