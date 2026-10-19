@@ -1,6 +1,5 @@
-/* levelFormat.js — JSON level schema v0 ("zigzag-level"), validation, localStorage save/load,
-   and conversion from chart-generator output. Dependency-free: no LittleJS, no DOM APIs —
-   safe to include in the main game (index.html) AND the standalone DevEdit.html editor. */
+/* levelFormat.js — legacy JSON level schema v0 ("zigzag-level") migration helpers.
+   Current playable stages use LevelFormatV1 and levels/stageN.level files. */
 (function () {
   'use strict';
 

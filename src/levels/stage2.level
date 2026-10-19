@@ -1,0 +1,277 @@
+{
+  "version": 1,
+  "stage": 2,
+  "title": "Neon Rush - Remix",
+  "artist": "ZIGZAG Demo",
+  "author": "ZIGZAG",
+  "song": "2-Neon Rush - Remix.mp3",
+  "bpm": 172,
+  "offsetMs": 0,
+  "difficulty": "normal",
+  "notes": [
+    {
+      "id": "stage2-click-001",
+      "type": "click",
+      "lane": 2,
+      "time": 850
+    },
+    {
+      "id": "stage2-click-002",
+      "type": "click",
+      "lane": 0,
+      "time": 1120
+    },
+    {
+      "id": "stage2-hold-001",
+      "type": "hold",
+      "lane": 3,
+      "startTime": 1740,
+      "endTime": 2390
+    },
+    {
+      "id": "stage2-drag-001",
+      "type": "drag",
+      "lane": 1,
+      "startTime": 3100,
+      "endTime": 3950,
+      "path": [
+        {
+          "lane": 1,
+          "time": 3100
+        },
+        {
+          "lane": 2,
+          "time": 3400
+        },
+        {
+          "lane": 0,
+          "time": 3680
+        },
+        {
+          "lane": 3,
+          "time": 3950
+        }
+      ]
+    },
+    {
+      "id": "stage2-auto-001",
+      "type": "click",
+      "lane": 2,
+      "time": 4885
+    },
+    {
+      "id": "stage2-auto-002",
+      "type": "click",
+      "lane": 1,
+      "time": 6280
+    },
+    {
+      "id": "stage2-auto-003",
+      "type": "drag",
+      "lane": 1,
+      "startTime": 6978,
+      "endTime": 8373,
+      "path": [
+        {
+          "lane": 1,
+          "time": 6978
+        },
+        {
+          "lane": 2,
+          "time": 7675
+        },
+        {
+          "lane": 3,
+          "time": 8373
+        }
+      ]
+    },
+    {
+      "id": "stage2-auto-004",
+      "type": "click",
+      "lane": 1,
+      "time": 9768
+    },
+    {
+      "id": "stage2-auto-005",
+      "type": "hold",
+      "lane": 2,
+      "startTime": 10466,
+      "endTime": 11861
+    },
+    {
+      "id": "stage2-auto-006",
+      "type": "click",
+      "lane": 1,
+      "time": 13256
+    },
+    {
+      "id": "stage2-auto-007",
+      "type": "click",
+      "lane": 2,
+      "time": 13954
+    },
+    {
+      "id": "stage2-auto-008",
+      "type": "drag",
+      "lane": 0,
+      "startTime": 15349,
+      "endTime": 17442,
+      "path": [
+        {
+          "lane": 0,
+          "time": 15349
+        },
+        {
+          "lane": 2,
+          "time": 16047
+        },
+        {
+          "lane": 0,
+          "time": 16745
+        },
+        {
+          "lane": 2,
+          "time": 17442
+        }
+      ]
+    },
+    {
+      "id": "stage2-auto-009",
+      "type": "click",
+      "lane": 1,
+      "time": 18140
+    },
+    {
+      "id": "stage2-auto-010",
+      "type": "click",
+      "lane": 2,
+      "time": 18838
+    },
+    {
+      "id": "stage2-auto-011",
+      "type": "click",
+      "lane": 0,
+      "time": 19536
+    },
+    {
+      "id": "stage2-auto-012",
+      "type": "hold",
+      "lane": 1,
+      "startTime": 20234,
+      "endTime": 20931
+    },
+    {
+      "id": "stage2-auto-013",
+      "type": "click",
+      "lane": 0,
+      "time": 21629
+    },
+    {
+      "id": "stage2-auto-014",
+      "type": "hold",
+      "lane": 1,
+      "startTime": 23024,
+      "endTime": 25117
+    },
+    {
+      "id": "stage2-auto-015",
+      "type": "click",
+      "lane": 0,
+      "time": 25815
+    },
+    {
+      "id": "stage2-auto-016",
+      "type": "drag",
+      "lane": 1,
+      "startTime": 26513,
+      "endTime": 28606,
+      "path": [
+        {
+          "lane": 1,
+          "time": 26513
+        },
+        {
+          "lane": 0,
+          "time": 27210
+        },
+        {
+          "lane": 1,
+          "time": 27908
+        },
+        {
+          "lane": 2,
+          "time": 28606
+        }
+      ]
+    },
+    {
+      "id": "stage2-auto-017",
+      "type": "click",
+      "lane": 2,
+      "time": 29304
+    },
+    {
+      "id": "stage2-auto-018",
+      "type": "click",
+      "lane": 1,
+      "time": 30002
+    },
+    {
+      "id": "stage2-auto-019",
+      "type": "click",
+      "lane": 2,
+      "time": 30700
+    },
+    {
+      "id": "stage2-auto-020",
+      "type": "click",
+      "lane": 1,
+      "time": 31398
+    },
+    {
+      "id": "stage2-auto-021",
+      "type": "click",
+      "lane": 3,
+      "time": 32096
+    },
+    {
+      "id": "stage2-auto-022",
+      "type": "hold",
+      "lane": 1,
+      "startTime": 32794,
+      "endTime": 33491
+    },
+    {
+      "id": "stage2-auto-023",
+      "type": "click",
+      "lane": 3,
+      "time": 34189
+    },
+    {
+      "id": "stage2-auto-024",
+      "type": "click",
+      "lane": 1,
+      "time": 35584
+    },
+    {
+      "id": "stage2-auto-025",
+      "type": "hold",
+      "lane": 1,
+      "startTime": 36979,
+      "endTime": 39072
+    },
+    {
+      "id": "stage2-auto-026",
+      "type": "click",
+      "lane": 0,
+      "time": 39770
+    },
+    {
+      "id": "stage2-auto-027",
+      "type": "click",
+      "lane": 0,
+      "time": 40468
+    }
+  ]
+}

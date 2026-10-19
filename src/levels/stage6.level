@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "stage": 6,
+  "title": "Overdrive Circuit",
+  "artist": "Original demo track",
+  "author": "ZIGZAG",
+  "song": "6-Overdrive Circuit.wav",
+  "bpm": 160,
+  "offsetMs": 0,
+  "difficulty": "normal",
+  "notes": [
+    {
+      "id": "stage6-auto-001",
+      "type": "click",
+      "lane": 3,
+      "time": 2250
+    },
+    {
+      "id": "stage6-auto-002",
+      "type": "click",
+      "lane": 2,
+      "time": 3000
+    },
+    {
+      "id": "stage6-auto-003",
+      "type": "click",
+      "lane": 3,
+      "time": 3750
+    },
+    {
+      "id": "stage6-auto-004",
+      "type": "click",
+      "lane": 2,
+      "time": 4500
+    },
+    {
+      "id": "stage6-auto-005",
+      "type": "click",
+      "lane": 0,
+      "time": 5250
+    },
+    {
+      "id": "stage6-auto-006",
+      "type": "hold",
+      "lane": 1,
+      "startTime": 6000,
+      "endTime": 8250
+    },
+    {
+      "id": "stage6-auto-007",
+      "type": "click",
+      "lane": 3,
+      "time": 9000
+    },
+    {
+      "id": "stage6-auto-008",
+      "type": "click",
+      "lane": 1,
+      "time": 9750
+    },
+    {
+      "id": "stage6-auto-009",
+      "type": "click",
+      "lane": 3,
+      "time": 10500
+    },
+    {
+      "id": "stage6-auto-010",
+      "type": "click",
+      "lane": 2,
+      "time": 11250
+    },
+    {
+      "id": "stage6-auto-011",
+      "type": "hold",
+      "lane": 0,
+      "startTime": 12750,
+      "endTime": 13500
+    },
+    {
+      "id": "stage6-auto-012",
+      "type": "click",
+      "lane": 1,
+      "time": 14250
+    },
+    {
+      "id": "stage6-auto-013",
+      "type": "drag",
+      "lane": 3,
+      "startTime": 15000,
+      "endTime": 16500,
+      "path": [
+        {
+          "lane": 3,
+          "time": 15000
+        },
+        {
+          "lane": 2,
+          "time": 15750
+        },
+        {
+          "lane": 0,
+          "time": 16500
+        }
+      ]
+    },
+    {
+      "id": "stage6-auto-014",
+      "type": "click",
+      "lane": 1,
+      "time": 17250
+    },
+    {
+      "id": "stage6-auto-015",
+      "type": "click",
+      "lane": 0,
+      "time": 18000
+    },
+    {
+      "id": "stage6-auto-016",
+      "type": "click",
+      "lane": 2,
+      "time": 18750
+    },
+    {
+      "id": "stage6-auto-017",
+      "type": "click",
+      "lane": 0,
+      "time": 20250
+    },
+    {
+      "id": "stage6-auto-018",
+      "type": "click",
+      "lane": 2,
+      "time": 21000
+    },
+    {
+      "id": "stage6-auto-019",
+      "type": "click",
+      "lane": 1,
+      "time": 21750
+    },
+    {
+      "id": "stage6-auto-020",
+      "type": "click",
+      "lane": 2,
+      "time": 22500
+    },
+    {
+      "id": "stage6-auto-021",
+      "type": "drag",
+      "lane": 1,
+      "startTime": 23250,
+      "endTime": 25500,
+      "path": [
+        {
+          "lane": 1,
+          "time": 23250
+        },
+        {
+          "lane": 3,
+          "time": 24000
+        },
+        {
+          "lane": 1,
+          "time": 24750
+        },
+        {
+          "lane": 3,
+          "time": 25500
+        }
+      ]
+    },
+    {
+      "id": "stage6-auto-022",
+      "type": "click",
+      "lane": 1,
+      "time": 27750
+    },
+    {
+      "id": "stage6-auto-023",
+      "type": "click",
+      "lane": 2,
+      "time": 28500
+    },
+    {
+      "id": "stage6-auto-024",
+      "type": "click",
+      "lane": 0,
+      "time": 30000
+    }
+  ]
+}

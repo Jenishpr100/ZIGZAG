@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "stage": 4,
+  "title": "Arcade Sunrise",
+  "artist": "Original demo track",
+  "author": "ZIGZAG",
+  "song": "4-Arcade Sunrise.wav",
+  "bpm": 135,
+  "offsetMs": 0,
+  "difficulty": "normal",
+  "notes": [
+    {
+      "id": "stage4-auto-001",
+      "type": "click",
+      "lane": 2,
+      "time": 2667
+    },
+    {
+      "id": "stage4-auto-002",
+      "type": "click",
+      "lane": 0,
+      "time": 3556
+    },
+    {
+      "id": "stage4-auto-003",
+      "type": "click",
+      "lane": 1,
+      "time": 4445
+    },
+    {
+      "id": "stage4-auto-004",
+      "type": "click",
+      "lane": 3,
+      "time": 5334
+    },
+    {
+      "id": "stage4-auto-005",
+      "type": "click",
+      "lane": 1,
+      "time": 6223
+    },
+    {
+      "id": "stage4-auto-006",
+      "type": "click",
+      "lane": 2,
+      "time": 8001
+    },
+    {
+      "id": "stage4-auto-007",
+      "type": "click",
+      "lane": 1,
+      "time": 8890
+    },
+    {
+      "id": "stage4-auto-008",
+      "type": "click",
+      "lane": 2,
+      "time": 9779
+    },
+    {
+      "id": "stage4-auto-009",
+      "type": "click",
+      "lane": 1,
+      "time": 11557
+    },
+    {
+      "id": "stage4-auto-010",
+      "type": "click",
+      "lane": 3,
+      "time": 12446
+    },
+    {
+      "id": "stage4-auto-011",
+      "type": "drag",
+      "lane": 1,
+      "startTime": 13335,
+      "endTime": 15113,
+      "path": [
+        {
+          "lane": 1,
+          "time": 13335
+        },
+        {
+          "lane": 3,
+          "time": 14224
+        },
+        {
+          "lane": 1,
+          "time": 15113
+        }
+      ]
+    },
+    {
+      "id": "stage4-auto-012",
+      "type": "click",
+      "lane": 2,
+      "time": 16002
+    },
+    {
+      "id": "stage4-auto-013",
+      "type": "click",
+      "lane": 1,
+      "time": 16891
+    },
+    {
+      "id": "stage4-auto-014",
+      "type": "click",
+      "lane": 3,
+      "time": 17780
+    },
+    {
+      "id": "stage4-auto-015",
+      "type": "click",
+      "lane": 1,
+      "time": 18669
+    },
+    {
+      "id": "stage4-auto-016",
+      "type": "click",
+      "lane": 3,
+      "time": 19558
+    },
+    {
+      "id": "stage4-auto-017",
+      "type": "click",
+      "lane": 2,
+      "time": 20447
+    },
+    {
+      "id": "stage4-auto-018",
+      "type": "hold",
+      "lane": 1,
+      "startTime": 21336,
+      "endTime": 23114
+    },
+    {
+      "id": "stage4-auto-019",
+      "type": "click",
+      "lane": 0,
+      "time": 24003
+    },
+    {
+      "id": "stage4-auto-020",
+      "type": "click",
+      "lane": 1,
+      "time": 25781
+    },
+    {
+      "id": "stage4-auto-021",
+      "type": "click",
+      "lane": 3,
+      "time": 26670
+    },
+    {
+      "id": "stage4-auto-022",
+      "type": "click",
+      "lane": 1,
+      "time": 27559
+    },
+    {
+      "id": "stage4-auto-023",
+      "type": "click",
+      "lane": 2,
+      "time": 28448
+    },
+    {
+      "id": "stage4-auto-024",
+      "type": "click",
+      "lane": 0,
+      "time": 30226
+    }
+  ]
+}

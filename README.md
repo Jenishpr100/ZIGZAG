@@ -1,67 +1,59 @@
 # MuZiC "Switch"
 
-A rhythm game in plain HTML, CSS and JavaScript. Tap, hold and drag along a zigzag path to your own MP3s.
+A small rhythm adventure built with LittleJS. Walk around Zig Zag Town, switch between its two color worlds, challenge three Wardens, and play six four lane music stages. Stage clears and best scores are saved in the browser.
 
-## Run it
-Double-click **index.html**. That's it: no server, npm or build step, and it works offline. Everything uses relative paths, so the folder can be moved to any computer. Use a current Chrome, Edge, Firefox or Safari.
+## Open the game directly
 
-## Controls
-- **Mouse / trackpad / touch:** click or tap; hold the button or finger for hold notes; hold and slide along the ribbon for drag notes.
-- **Keyboard (optional):** `D F J K` are lanes 1–4. For drags, hold the key of the lane the ribbon is in and roll to the next key as it moves.
-- `Esc` / `P` / `Space` pause, `R` restart. Menus work with `Tab`, arrow keys, `Enter` and `Esc` (back).
-- The in-game **How to Play** screen explains all of this.
+Double-click the generated root `index.html` to play the full game. It embeds the game code, styles, six listed music tracks, and all stage charts, so it works from `file://` without a server, port, Node.js, or extra folders. Progress and settings are saved in the browser when local storage is available.
 
-## Add a song
-1. Name the MP3 `ID-Song Name.mp3`, e.g. `4-My Cool Song.mp3`. The number before the **first** hyphen is the unique song ID. Everything after it is the displayed name; spaces and more hyphens are fine (`5-Neon Rush - Remix.mp3`).
-2. Put the file in the `songs` folder.
-3. Add the exact file name to `files` in `songs/songs.js` (browsers cannot scan a folder from `file://`, so this list is required).
-4. Add its BPM to `songs/songs.bmp` **and** to the `bpm` text in `songs/songs.js`.
+When you change the source HTML, CSS, JavaScript, music manifest, or stage files, regenerate the standalone file with `npm run build:standalone` before sharing it. This build step only creates the HTML file; people who play it do not need to run a build.
 
-Invalid names, duplicate IDs and missing BPMs are skipped or defaulted (120) and listed under **Song list notices** on the Song Select screen. Songs are sorted by ID.
+The separate `LevelEditor.html` is a project editing tool and still uses the project folders. For GitHub Pages, push to `main`, set the repository's Pages source to **GitHub Actions**, and open the Pages URL when the workflow finishes. The workflow rebuilds the standalone game and publishes it with the editor and source files. It includes only tracks listed in `js/song-manifest.js`; the unused `4-Skillet - Monster.mp3` is not published.
 
-## songs.bmp format
-Plain text despite the extension:
-```
-# comments start with #
-1=120
-2=172
-3=90,0.35     # optional: first beat at 0.35 s
-```
-Browsers usually block reading `songs.bmp` from a double-clicked page, so the game falls back to the copy in `songs/songs.js`. You can also use **Song Select → Song list notices → Load songs.bmp…** to load your edited file (remembered until you click "Use built-in list"). BPM must be 30–400.
+To publish manually as a static site, run `npm run build:static` and upload `dist/`. The game itself does not need a server or port.
 
-How BPM is used: it sets the beat grid notes snap to and, with difficulty, the density. Very fast songs automatically drop to half-time so charts never exceed what each difficulty can handle.
+## Run locally (optional)
 
-## Seeds
-Every chart is generated from **song ID + BPM + difficulty + seed** with a seeded random generator, so the same inputs always give the same chart, and a new seed gives a new one. Seeds can be text or numbers (text is hashed to a number). Change the seed on Song Select or Settings, or press **Random Seed**. The seed is saved, shown on the results screen, and high scores are stored per `song ID + difficulty + seed`.
+The included Node.js helper is only needed to write a level directly into the local `levels/` folder while editing. Without it, the editor downloads the `.level` file for you to add to the project and publish. To use the optional helper, run `npm run dev` and open [http://127.0.0.1:4173/](http://127.0.0.1:4173/).
 
-## Themes
-Edit `js/themes.js`. Each theme is one object (background gradient, note, hold, drag and path colors, particle colors, and `ui` colors for the menus). Copy an entry, give it a new key and name, and it appears in the theme selectors automatically.
+## Play
 
-## Settings
-Volumes, timing offset (ms), seed, difficulty, theme, fullscreen, reduced motion, screen shake, hit effects, practice mode (cannot fail), and reset. All saved in `localStorage`.
+- **Enter the Hub** starts in Zig Zag Town. Walk to the glowing portal and press **Space** or **Enter** to play the selected stage.
+- **Stage Select** chooses a stage and takes you to the hub. Stages only start from the hub portal. Clear a stage by landing at least one note to unlock the next one.
+- Walk with **WASD** or the arrow keys. **Down** switches between ZIG and ZAG. **Enter** talks to people and challenges a nearby Warden.
+- Hit notes with **D F J K** for lanes 1–4. Mouse and touch work too. Keep holding for long notes; follow the gold ribbon across lanes for drags.
+- **Page Up / Page Down** selects an unlocked stage in the overworld. **Esc** or **P** pauses; **R** returns to the hub after a stage.
+- Misses reduce health. **Practice mode** prevents health loss. Adjust timing offset and difficulty in Settings.
 
-## Troubleshooting
-- **"Cannot load songs/…"**: the file is missing or its name differs from `songs/songs.js` (case and spaces matter), or the MP3 is damaged.
-- **Song not listed**: the name must match `number-name.mp3` and be in `songs/songs.js`; check the notices panel.
-- **No sound**: browsers need a click before audio. Start from a button, and check the volume sliders.
-- **Notes feel early/late**: adjust Timing offset in Settings (Bluetooth headphones often need a positive value).
-- **Notes don't match the beat**: if your song's first beat isn't at 0:00, add the first-beat time to `songs.bmp` (`id=bpm,seconds`).
-- **Settings not saved**: some browsers block `localStorage` on `file://`; the game still works but forgets settings after closing.
+## Stages
 
-## Files
-```
-index.html            entry point
-css/styles.css        menu styling
-js/storage.js         safe localStorage wrapper
-js/settings.js        saved settings
-js/themes.js          theme data
-js/songs.js           filename + songs.bmp parsing
-js/audio.js           music playback + synthesized sound effects
-js/chart-generator.js seeded chart generator, difficulty table
-js/input.js           pointer + keyboard input
-js/gameplay.js        state machine, judging, scoring, rendering
-js/menu.js            screens, song select, settings UI
-js/main.js            boot and global listeners
-songs/                songs.js (manifest), songs.bmp (BPM), MP3s
-```
-The three demo MP3s are generated tones made for this project.
+The numbered audio file maps to `levels/stageN.level`:
+
+| Stage | Track | Length | BPM |
+|---:|---|---:|---:|
+| 1 | Demo Pulse | 50 s | 120 |
+| 2 | Neon Rush - Remix | 42 s | 172 |
+| 3 | Slow Drift | 40 s | 90 |
+| 4 | Arcade Sunrise | 32 s | 135 |
+| 5 | Glass Steps | 32 s | 108 |
+| 6 | Overdrive Circuit | 32 s | 160 |
+
+Stages 4–6 use original synthesized demo music included in `songs/`. The older `4-Skillet - Monster.mp3` file is not listed or used by the game. Confirm its rights before including it in a public release.
+
+## Edit a stage
+
+Open `LevelEditor.html`. It loads the matching `levels/stageN.level` file when one exists. Record notes in the four lane scene, inspect their scrolling timeline, change the timeline range, edit timing, lane, note type, or JSON, and use Quick Replay to review the stage. Undo and redo edits with the buttons or Ctrl+Z / Ctrl+Y. The editor follows the selected theme. Save directly into `levels/` with the optional local helper, or download the `.level` file and add it to that folder before publishing. The stage file is the source of the playable notes; there is no generated seed chart.
+
+Times in `.level` files are milliseconds from the track start. Lanes are numbered 0–3 from left to right. Click, hold, and drag notes are supported. `js/levelFormatV1.js` validates imported and saved files.
+
+## Project map
+
+See [Project file guide](docs/PROJECT_STRUCTURE.md) for a folder map and a description of the files, including which files are generated and which are used by the game, editor, and build tools.
+
+## Credits and release notes
+
+The game uses the LittleJS engine and [Tiny Neighbours by Vryell](https://vryell.itch.io/tiny-neighbours) NPC sprites. The pack allows personal and commercial use, asks users not to redistribute the pack by itself, and says credit is appreciated. Teto sprite art was supplied by a project contributor. The project includes original synthesized demo music for stages 4–6. AI assistance was used for code and procedural audio generation.
+
+The release plan requires original music. Do not bundle the unlisted `4-Skillet - Monster.mp3` unless you have permission to redistribute it.
+
+Run the built-in level format checks with `npm test`.
