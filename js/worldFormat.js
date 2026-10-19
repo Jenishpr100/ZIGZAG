@@ -3,6 +3,17 @@
    LittleJS, no DOM APIs — safe in the main game (index.html), the runtime overworld.js,
    and the standalone DevEdit.html WORLD tab.
 
+   Dialogs are paged. A dialog MAY also carry `options` — a branching choice list
+   shown after the last page:
+
+     "welcome": { "name": "Villager",
+                  "pages": ["Welcome!", "…"],
+                  "options": [ { "text": "Tell me about the ZAG world.", "goto": "zag_lore" },
+                               { "text": "Goodbye.",               "goto": null      } ] }
+
+   `options` is optional (a dialog without it is exactly as before: linear pages, then
+   close). 1..6 entries; `text` non-empty; `goto` is a dialog id or null (close).
+
    Storage key: localStorage 'muzic-world' (instant-play save). GAME.BIN files are the
    same JSON produced by toJSON()/fromJSON(). */
 (function () {
@@ -14,6 +25,7 @@
   const WORLDS = ['zig', 'zag', 'both'];
   const DIRS = ['up', 'down', 'left', 'right'];
   const TERRAIN_CHARS = ['#', '.', '-'];   // # wall · . floor · - path
+  const MAX_OPTIONS = 6;                    // max branching choices per dialog (dialogs.*.options)
 
   /* ---- storage (localStorage with in-memory fallback for file:// lockdowns / Node) ---- */
   const mem = {};
@@ -56,6 +68,23 @@
       else d.pages.forEach((p, i) => {
         if (typeof p !== 'string' || !p.length) errors.push(where + '.pages[' + i + '] must be a non-empty string.');
       });
+
+      /* optional branching choices, shown after the last page */
+      if (d.options != null) {
+        if (!Array.isArray(d.options))
+          errors.push(where + '.options must be an array of 1..' + MAX_OPTIONS + ' choices (omit it for a linear dialog).');
+        else if (d.options.length < 1 || d.options.length > MAX_OPTIONS)
+          errors.push(where + '.options must have between 1 and ' + MAX_OPTIONS + ' entries (got ' + d.options.length + ').');
+        else d.options.forEach((o, i) => {
+          const w2 = where + '.options[' + i + ']';
+          if (!o || typeof o !== 'object' || Array.isArray(o)) { errors.push(w2 + ' must be an object.'); return; }
+          if (typeof o.text !== 'string' || !o.text.trim()) errors.push(w2 + '.text must be a non-empty string.');
+          if (o.goto != null) {
+            if (typeof o.goto !== 'string' || !o.goto) errors.push(w2 + '.goto must be a non-empty dialog id string, or null to close the dialog.');
+            else if (dialogIds.indexOf(o.goto) < 0) errors.push(w2 + '.goto references missing dialog "' + o.goto + '".');
+          }
+        });
+      }
     });
 
     /* ---- rooms ---- */
@@ -220,7 +249,7 @@
   }
 
   window.WorldFormat = {
-    FORMAT, VERSION, LS_KEY, WORLDS, DIRS, TERRAIN_CHARS,
+    FORMAT, VERSION, LS_KEY, WORLDS, DIRS, TERRAIN_CHARS, MAX_OPTIONS,
     validate, createBlank, getWorld, save, toJSON, fromJSON
   };
 })();

@@ -116,6 +116,30 @@ function owDrawCell(key, index, pos, size, color, mirror)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// foot anchoring — how high a sprite cell's boots sit above its own box
+//
+// A spritesheet cell is a BOX; the character inside it is smaller than the box.
+// Measured with PIL over assets/img/spritesheet.png (all 14 frames) and
+// assets/Tiny Neighbours Vol1/NPC_*.png (all 104 cells of every sheet):
+//
+//   teto : 20x26 cells — art occupies rows 3..22, so 3 fully transparent rows
+//          sit under the boots (plus 1 column of padding at each side).
+//   npc  : 16x16 cells — the boots reach row 15, 0 transparent rows below.
+//
+// Drawing a cell CENTRED on a position therefore parks the visible feet
+// padBottom * scale above the ground — exactly the "floating" the playtester
+// reported. owSpriteFootY() anchors the visible FEET on the shadow instead.
+///////////////////////////////////////////////////////////////////////////////
+
+const OW_SPRITE_FOOT_PAD = { teto: 3, npc: 0 };   // transparent rows under the art
+
+/** draw-centre Y for a cell of world height `h` whose boots land on `footY` */
+function owSpriteFootY(footY, h, cellPx, padPx)
+{
+    return footY + h/2 - padPx*h/cellPx;
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // palettes — owPal is always a full palette of Colors, either a direct
 // reference to DATA.pal.zig/zag, or a per-frame lerp while switching.
 // The ZIG <-> ZAG switch only swaps palette/layer visibility — room geometry
@@ -694,6 +718,1020 @@ function owHash(x, y, s)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// pixel tileset — 16x16 tiles, authored here and baked into a texture
+//
+// The whole overworld is drawn from these tiles, never from smooth quads.
+// Each tile is either a hand-drawn 16x16 grid of palette-slot characters
+// (`f` + `r`; row 0 of `r` is the TOP of the tile = screen-up) or grown by a
+// seeded generator for organic ground. They are painted once into an
+// offscreen canvas, uploaded as a pixelated TextureInfo and drawn with
+// drawTile() so nearest-neighbour sampling keeps every texel crisp.
+//
+// ZIG and ZAG each get their own baked sheet out of DATA.pal.zig / .zag, and
+// a world switch cross-fades between the two sheets.
+///////////////////////////////////////////////////////////////////////////////
+
+const OW_TILE_PX = 16, OW_TILE_COLS = 8;
+
+const OW_TILE_SLOT = {
+    '.': null,       // transparent
+    'G': 'tGrass',  'g': 'tGrassLo',  'h': 'tGrassHi',
+    'F': 'tPetal',  'y': 'tPollen',
+    'S': 'tSoil',   's': 'tSoilLo',
+    'P': 'tPath',   'p': 'tPathHi',   'q': 'tPathLo',
+    'B': 'tBrick',  'b': 'tBrickLo',  'c': 'tBrickHi',
+    'R': 'tRoof',   'r': 'tRoofLo',   'e': 'tRoofHi',
+    'W': 'tWall',   'w': 'tWallLo',
+    'D': 'tGlass',
+    'O': 'tWood',   'o': 'tWoodLo',
+    'L': 'tLeaf',   'l': 'tLeafLo',   'm': 'tLeafHi',
+    'T': 'tTrunk',
+    'N': 'tRock',   'n': 'tRockLo',
+    'U': 'tWater',  'u': 'tWaterHi',
+    'A': 'tNeon',   'a': 'tNeon2',
+    'X': 'tInk',
+    'V': 'tFloor',  'v': 'tFloorLo',
+    'C': 'tCloth',  'i': 'tClothLo',
+};
+
+// ---------------------------------------------------------------------------
+// the hand-drawn art. `f` fills every row not listed in `r`; `mirror` clones
+// another tile sideways (the pitch, walls and boards are symmetric enough
+// that drawing both halves by hand is wasted bytes).
+// ---------------------------------------------------------------------------
+const OW_TILE_ART = {
+
+    // ---- ground structure --------------------------------------------------
+    brick: { f:'B', r:[
+        'bbbbbbbbbbbbbbbb',
+        'BBBBBBBBBBBBBBBB',
+        'BBBbBBBbBBBbBBb',
+        'BBBbBBBbBBBbBBb',
+        'bbbBBbBBbBBbBBB',
+        'bbbBBbBBbBBbBBB',
+        'BBBBbBBBBBbBBBb',
+        'BBBBbBBBBBbBBBb',
+        'BBBBbBBBBBbBBBb',
+        'bbbbbbbbbbbbbbbb',
+        'BbBBbBBbBBbBBBb',
+        'BbBBbBBbBBbBBBb',
+        'BBBbBBBBBbBBbBB',
+        'BBBbBBBBBbBBbBB',
+        'bbbBBbBBbBBbBBBB',
+        'bbbBBbBBbBBbBBBB'] },
+
+    brickCap: { f:'B', r:[
+        'cccccccccccccccc',
+        'cCCCCCCCCCCCCCCC',
+        'bbbbbbbbbbbbbbbb',
+        'BBBbBBBbBBBbBBb',
+        'BBBbBBBbBBBbBBb',
+        'bbbBBbBBbBBbBBB',
+        'bbbBBbBBbBBbBBB',
+        'BBBBbBBBBBbBBBb',
+        'BBBBbBBBBBbBBBb',
+        'BBBBbBBBBBbBBBb',
+        'bbbbbbbbbbbbbbbb',
+        'BbBBbBBbBBbBBBb',
+        'BbBBbBBbBBbBBBb',
+        'BBBbBBBBBbBBbBB',
+        'BBBbBBBBBbBBbBB',
+        'bbbBBbBBbBBbBBBB'] },
+
+    crate: { f:'O', r:[
+        'oooooooooooooooo',
+        'OVVVVVVVVVVVVVVO',
+        'OVVVVVVVVVVVVVVO',
+        'OvvvvvvvvvvvvvvO',
+        'OVVVVOVVVVOVVVVO',
+        'OVVVVOVVVVOVVVVO',
+        'OVVVVVVVVVVVVVVO',
+        'OVVVVOVVVVOVVVVO',
+        'OVVVVOVVVVOVVVVO',
+        'OVVVVVVVVVVVVVVO',
+        'OVVVVOVVVVOVVVVO',
+        'OVVVVOVVVVOVVVVO',
+        'OVVVVVVVVVVVVVVO',
+        'OvvvvvvvvvvvvvvO',
+        'OVVVVVVVVVVVVVVO',
+        'oooooooooooooooo'] },
+
+    // ---- the hip roof: ridge cap on top, fascia along the eave --------------
+    roofC: { f:'R', r:[
+        'RRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'ReRRRRRReRRRRRRe',
+        'RRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'ReRRRRRReRRRRRRe',
+        'RRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'ReRRRRRReRRRRRRe',
+        'RRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'ReRRRRRReRRRRRRe'] },
+
+    roofL: { f:'R', r:[
+        'rrrrrrrrrrrrrrrr',
+        'rrrrrrrrrrrrrrrr',
+        'rrrrrrrrrrrrrrrr',
+        'eeeeeeeeeeeeeeee',
+        'RRRRRRRRRRRRRRRR',
+        '.....RRRRRRRRRRR',
+        '..RRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'ReRRRRRReRRRRRRe'] },
+
+    roofR: { mirror:'roofL' },
+
+    roof2C: { f:'R', r:[
+        'RRRRRRRRRRRRRRRR',
+        'ReRRRRRReRRRRRRe',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'ReRRRRRReRRRRRRe',
+        'RRRRRRRRRRRRRRRR',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'ReRRRRRReRRRRRRe',
+        'RRRRRRRRRRRRRRRR',
+        'rrrrrrrrrrrrrrrr',
+        'oooooooooooooooo',
+        'wwwwwwwwwwwwwwww',
+        'rrrrrrrrrrrrrrrr',
+        'XXXXXXXXXXXXXXXX',
+        '................'] },
+
+    roof2L: { mirror:'roof2C', f:'R' },
+
+    // ---- house facade ------------------------------------------------------
+    hwall: { f:'W', r:[
+        'wwwwwwwwwwwwwwww',
+        'wWWWWWWWWWWWWWWw',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'wWWWWWWWWWWWWwWW',
+        'WWWWWWWWWWWWWWWW',
+        'wwwwwwwwwwwwwwww',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'wWWwWWWWWWWWWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'wwwwwwwwwwwwwwww',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'wWWWWWWWWWWWWWWw',
+        'wwwwwwwwwwwwwwww'] },
+
+    hwallWin: { f:'W', r:[
+        'wwwwwwwwwwwwwwww',
+        'wWWWWWWWWWWWWWWw',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWooooooooWWWW',
+        'WWWWoDDDDDDdoWWW',
+        'WWWWoDDDoDDDoWWW',
+        'WWWWoDDDDDDdoWWW',
+        'WWWWoDDDoDDDoWWW',
+        'WWWWoDDDDDDdoWWW',
+        'WWWWooooooooWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'wwwwwwwwwwwwwwww',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'wwwwwwwwwwwwwwww'] },
+
+    hwallWinR: { mirror:'hwallWin' },
+
+    // the door tile: a doorway set into the wall, with a stone sill
+    doorBot: { f:'W', r:[
+        'wwwwwwwwwwwwwwww',
+        'wWWWWWWWWWWWWWWw',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWooooooooWWWW',
+        'WWWWoOOOOOOOoWWW',
+        'WWWWoOOOOOOOOoWW',
+        'WWWWoOoooooOOoWW',
+        'WWWWoOoooooOOoWW',
+        'WWWWoOoooyOOoWW',
+        'WWWWoOooooOOoWW',
+        'WWWWoOOOOOOOoWWW',
+        'WWWWoOOOOOOOoWWW',
+        'WWWWooooooooWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'wwwwwwwwwwwwwwww',
+        'XXXXXXXXXXXXXXXX'] },
+
+    awning: { f:'C', r:[
+        'CCCCCCCCCCCCCCCC',
+        'CWWWCWWWCWWWCWWW',
+        'CWWWCWWWCWWWCWWW',
+        'CCCCCCCCCCCCCCCC',
+        'CWWWCWWWCWWWCWWW',
+        'CWWWCWWWCWWWCWWW',
+        'CCCCCCCCCCCCCCCC',
+        'CWWWCWWWCWWWCWWW',
+        'CWWWCWWWCWWWCWWW',
+        'CCCCCCCCCCCCCCCC',
+        'CWWWCWWWCWWWCWWW',
+        'CWWWCWWWCWWWCWWW',
+        'CCCCCCCCCCCCCCCC',
+        'CWWWCWWWCWWWCWWW',
+        'CCCCCCCCCCCCCCCC',
+        '.i.i.i.i.i.i.i.i.'] },
+
+    signboard: { f:'O', r:[
+        'oooooooooooooooo',
+        'oOOOOOOOOOOOOOo',
+        'oOOOOOOOOOOOOOo',
+        'oOyyyyOOOOyyyyOo',
+        'oOOOOOOOOOOOOOo',
+        'oOOOOOOOOOOOOOo',
+        'oOyyyyOOOOyyyyOo',
+        'oOOOOOOOOOOOOOo',
+        'oooooooooooooooo',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................'] },
+
+    neonBand: { f:'X', r:[
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'wwwwwwwwwwwwwwww',
+        'aaaaaaaaaaaaaaaa',
+        'AAAAAAAAAAAAAAAA',
+        'aaaaaaaaaaaaaaaa',
+        'wwwwwwwwwwwwwwww',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXwwwwwwwwXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX'] },
+
+    counter: { f:'W', r:[
+        'XXXXXXXXXXXXXXXX',
+        'OOOOOOOOOOOOOOOO',
+        'OOOOOOOOOOOOOOOO',
+        'oooooooooooooooo',
+        'WWWWWWWWWWWWWWWW',
+        'WWWWWWWWWWWWWWWW',
+        'WwwwwwwwwwwwwwwW',
+        'WwwwwwwwwwwwwwwW',
+        'WwwwwwwwwwwwwwwW',
+        'WwwwwwwwwwwwwwwW',
+        'WwwwwwwwwwwwwwwW',
+        'WwwwwwwwwwwwwwwW',
+        'WwwwwwwwwwwwwwwW',
+        'WwwwwwwwwwwwwwwW',
+        'WWWWWWWWWWWWWWWW',
+        'XXXXXXXXXXXXXXXX'] },
+
+    // ---- trees / rocks / street furniture ----------------------------------
+    treeT: { f:'L', r:[
+        '................',
+        '.....LLLLLL.....',
+        '...LLLLLLLLLL...',
+        '..LLmLLLLLLmLL..',
+        '.LLmLLLLLLLLmLL.',
+        '.LLLLLLmLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'lllLLLLLLLLLLlll',
+        'llllllLLLLllllll',
+        'llllllllllllllll',
+        '..llllllllllll..',
+        '....llllllll....'] },
+
+    treeM: { f:'L', r:[
+        'LLLLLLLLLLLLLLLL',
+        'LLmLLLLLLLLLLmLL',
+        'LLmLLLLLLLLLLmLL',
+        'LLLLLLLLLLLLLLLL',
+        'LlLLLLLLLLLLLLlL',
+        'LLLLLLLLLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'llLLLLLLLLLLLLll',
+        'llLLmLLLLLLmLLll',
+        'lllLLLLLLLLLLlll',
+        'llllLLLLLLLLllll',
+        'llllllLLLLllllll',
+        'llllllllllllllll',
+        '..llllllllllll..',
+        '....llllllll....',
+        '................'] },
+
+    treeB: { f:'l', r:[
+        'llllllllllllllll',
+        'lllTTTTTTTTTTlll',
+        'llTTTTTTTTTTTTll',
+        'llTTTTTTTTTTTTll',
+        'llTTTTTTTTTTTTll',
+        'llTTTTTTTTTTTTll',
+        'llTTTTTTTTTTTTll',
+        'llTTTTTTTTTTTTll',
+        'lllTTTTTTTTTTlll',
+        '..llTTTTTTTTll..',
+        '....lTTTTTTl....',
+        '.....lTTTTl.....',
+        '.....lTTTTl.....',
+        '.....lTTTTl.....',
+        '....lTTTTTTl....',
+        '...llllllllll...'] },
+
+    bush: { f:'L', r:[
+        '................',
+        '................',
+        '................',
+        '.....LLLLLL.....',
+        '...LLLLLLLLLL...',
+        '..LLmLLLLLLmLL..',
+        '.LLmLLLLLLLLmLL.',
+        '.LLLLLLmLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'LLLLLLLLLLLLLLLL',
+        'lllLLLLLLLLLLlll',
+        'llllllLLLLllllll',
+        'llllllllllllllll',
+        '..llllllllllll..',
+        '................',
+        '................'] },
+
+    stone: { f:'N', r:[
+        '................',
+        '................',
+        '................',
+        '.....NNNNN......',
+        '...NNNNNNNNNN...',
+        '..NNNNcNNNNNNN..',
+        '..NNNcNNNNNNNN..',
+        '.NNNNNcNNNNNNNN.',
+        '.NNNNNNNNcNNNNN.',
+        '.NNNNNNNNNNNNNN.',
+        '.NNNNNNNNNNNNNN.',
+        '..NNNNNNNNNNNN..',
+        '..nNNNNNNNNNNn..',
+        '...nnnnnnnnnn...',
+        '....nnnnnnnn....',
+        '................'] },
+
+    fenceP: { f:'O', r:[
+        '.......OO.......',
+        '......OOOO......',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....',
+        '.....OOOOOO.....'] },
+
+    fenceRail: { f:'O', r:[
+        '................',
+        '................',
+        '................',
+        'OOOOOOOOOOOOOOOO',
+        'OOOOOOOOOOOOOOOO',
+        'OOOOOOOOOOOOOOOO',
+        '................',
+        '................',
+        '................',
+        'OOOOOOOOOOOOOOOO',
+        'OOOOOOOOOOOOOOOO',
+        'OOOOOOOOOOOOOOOO',
+        '................',
+        '................',
+        '................',
+        '................'] },
+
+    signB: { f:'O', r:[
+        '................',
+        '.oooooooooooooo.',
+        '.oOOOOOOOOOOOOo.',
+        '.oOyOOOyOOOyOOo.',
+        '.oOOOOOOOOOOOOo.',
+        '.oOyOOOyOOOyOOo.',
+        '.oOOOOOOOOOOOOo.',
+        '.oooooooooooooo.',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................',
+        '................'] },
+
+    signP: { mirror:'fenceP' },
+
+    lampP: { f:'O', r:[
+        '................',
+        '................',
+        '................',
+        '................',
+        '.......OO.......',
+        '......OOOO......',
+        '......OOOO......',
+        '......OOOO......',
+        '......OOOO......',
+        '......OOOO......',
+        '......OOOO......',
+        '......OOOO......',
+        '......OOOO......',
+        '......OwwO......',
+        '.....OOOOOO.....',
+        '....OOOOOOOO....'] },
+
+    lampH: { f:'O', r:[
+        '..oooooooooooo..',
+        '.oOOOOOOOOOOOOo.',
+        '.oOwwwwwwwwwwOo.',
+        '.owAAAAAAAAAAwo.',
+        '.owAWWWWWWWWAwo.',
+        '.owAWWWWWWWWAwo.',
+        '.owAWWWWWWWWAwo.',
+        '.owAWWWWWWWWAwo.',
+        '.owAWWWWWWWWAwo.',
+        '.owAWWWWWWWWAwo.',
+        '.oowAAAAAAAAwoo.',
+        '.oOOOOOOOOOOOOo.',
+        '..oooooooooooo..',
+        '................',
+        '................',
+        '................'] },
+
+    // ---- rusted iron gate (flavour doors, ZIG) -----------------------------
+    ironP: { f:'N', r:[
+        'NNNNNNNNNNNNNNNN',
+        'NNccccccccccccNN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NcNNNNNNNNNNNNcN',
+        'NNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNN'] },
+
+    ironBar: { f:'O', r:[
+        '................',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OOOOOOOOOOOOOO.',
+        '.oooooooooooooo.',
+        '.OOOOOOOOOOOOOO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '................'] },
+
+    ironFoot: { f:'N', r:[
+        'XXXXXXXXXXXXXXXX',
+        'NNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNN',
+        'NnnnnnnnnnnnnnnN',
+        'NnnnnnnnnnnnnnnN',
+        'NNNNNNNNNNNNNNNN',
+        'NNNNNNNNNNNNNNNN',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '.OO..OO..OO..OO.',
+        '................'] },
+
+    // ---- neon portal gate (flavour doors, ZAG) -----------------------------
+    neonP: { f:'X', r:[
+        'XXXXXXXXXXXXXXXX',
+        'XXaaaaaaaaaaaaXX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XaAAAAAAAAAAAAaX',
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX'] },
+
+    neonBar: { f:'A', r:[
+        '................',
+        '.XX..XX..XX..XX.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.XXXXXXXXXXXXXXXX',
+        '.aaaaaaaaaaaaaa.',
+        '.XXXXXXXXXXXXXXXX',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '................'] },
+
+    neonFoot: { f:'X', r:[
+        'XXXXXXXXXXXXXXXX',
+        'XXXXXXXXXXXXXXXX',
+        'XwwwwwwwwwwwwwwX',
+        'XwaaaaaaaaaaaawX',
+        'XwaAAAAAAAAAAawX',
+        'XwwwwwwwwwwwwwwX',
+        'XXXXXXXXXXXXXXXX',
+        '.XX..XX..XX..XX.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '.AA..AA..AA..AA.',
+        '................'] },
+
+    // ---- water -------------------------------------------------------------
+    water: { f:'U', r:[
+        'UUUUUUUUUUUUUUUU',
+        'UUUUUUUUUUUUUUUU',
+        'uUUUUUUUUUUUUUUu',
+        'UUUUUuUUUUUuUUUU',
+        'UUUUUUUUUUUUUUUU',
+        'UUUUUUUUUUUUUUUU',
+        'UuUUUUUuUUUUUUuU',
+        'UUUUUUUUUUUUUUUU',
+        'UUUUUuUUUUUuUUUU',
+        'UUUUUUUUUUUUUUUU',
+        'UUUUUUUUUUUUUUUU',
+        'uUUUUUUUUUUUUUUu',
+        'UUUUUuUUUUUuUUUU',
+        'UUUUUUUUUUUUUUUU',
+        'UUUUUUUUUUUUUUUU',
+        'uUuUUUUUuUUUUUUu'] },
+};
+
+// ---------------------------------------------------------------------------
+// grown tiles — organic ground reads better scattered than hand-placed, and a
+// seeded generator keeps every bake byte-identical so nothing shimmers.
+//   gen(px, rnd, accent)  px(x, y, slotChar) paints one texel
+// ---------------------------------------------------------------------------
+const OW_TILE_GEN = {
+
+    /** base turf: speckle plus a few two-texel blades */
+    grass: (px, rnd) =>
+    {
+        const P = OW_TILE_PX;
+        for (let y = 0; y < P; ++y)
+        for (let x = 0; x < P; ++x)
+            px(x, y, rnd.float() < .17 ? 'g' : 'G');
+        for (let i = 0, n = 3 + (rnd.float(0, 3)|0); i < n; ++i)
+        {
+            const x = rnd.float(0, P)|0, y = rnd.float(3, 15)|0;
+            px(x, y, 'g'); px(x, y > 0 ? y-1 : 1, 'g');
+        }
+        for (let i = 0, n = 2 + (rnd.float(0, 3)|0); i < n; ++i)
+            px(rnd.float(0, P)|0, rnd.float(0, P)|0, 'h');
+    },
+
+    /** turf with a fat tuft of blades */
+    tuft: (px, rnd) =>
+    {
+        OW_TILE_GEN.grass(px, rnd);
+        const P = OW_TILE_PX, bx = 3 + (rnd.float(0, 8)|0), by = 9 + (rnd.float(0, 4)|0);
+        for (let i = -2; i <= 2; ++i)
+        {
+            const h = 3 + (i & 1);
+            for (let k = 0; k < h; ++k)
+                px(bx + i*2, by - k, k == h-1 ? 'h' : 'g');
+        }
+    },
+
+    /** turf with a five-petal flower; `accent` is the petal colour slot */
+    flower: (px, rnd, accent) =>
+    {
+        OW_TILE_GEN.grass(px, rnd);
+        const P = OW_TILE_PX;
+        const bx = 4 + (rnd.float(0, 7)|0), by = 6 + (rnd.float(0, 6)|0);
+        px(bx, by, 'y'); px(bx-2, by, accent); px(bx+2, by, accent);
+        px(bx, by-2, accent); px(bx, by+2, accent);
+        px(bx-1, by-1, 'l'); px(bx+1, by+1, 'g');
+    },
+
+    /** turf with a couple of pebbles */
+    pebble: (px, rnd) =>
+    {
+        OW_TILE_GEN.grass(px, rnd);
+        for (let i = 0; i < 3; ++i)
+        {
+            const x = 1 + (rnd.float(0, 13)|0), y = 2 + (rnd.float(0, 12)|0);
+            px(x, y, 'n'); px(x+1, y, 'N'); px(x, y+1, 'N');
+            if (rnd.float() < .5) px(x+1, y+1, 'n');
+        }
+    },
+
+    /** packed-earth road with scattered stones */
+    cobble: (px, rnd) =>
+    {
+        const P = OW_TILE_PX;
+        for (let y = 0; y < P; ++y)
+        for (let x = 0; x < P; ++x)
+            px(x, y, ((x + y*2) % 5 == 0 || (x*3 + y) % 7 == 0) ? 'q' : 'P');
+        for (let i = 0; i < 7; ++i)
+        {
+            const x = rnd.float(0, P)|0, y = rnd.float(0, P-1)|0;
+            px(x, y, 'p'); if (rnd.float() < .6) px(x+1, y, 'p');
+            px(x, y+1, 'q');
+        }
+        for (let i = 0; i < 3; ++i)
+            px(rnd.float(0, P)|0, rnd.float(0, P)|0, 's');
+    },
+
+    /** indoor boards: planks, seams and a little grain */
+    floor: (px, rnd) =>
+    {
+        const P = OW_TILE_PX;
+        for (let y = 0; y < P; ++y)
+        {
+            const plank = (y/4)|0, off = plank % 2 ? 7 : 0;
+            for (let x = 0; x < P; ++x)
+                px(x, y, (y % 4 == 0 || (x + off) % 7 == 0) ? 'v' : 'V');
+        }
+        for (let i = 0; i < 5; ++i)
+            px(rnd.float(0, P)|0, 1 + (rnd.float(0, 13)|0), 'v');
+    },
+
+    /** shop carpet: a woven chequer with a piped border */
+    carpet: (px) =>
+    {
+        const P = OW_TILE_PX;
+        for (let y = 0; y < P; ++y)
+        for (let x = 0; x < P; ++x)
+            px(x, y, ((x>>2) + (y>>2)) % 2 ? 'C' : 'i');
+        for (let i = 0; i < P; ++i)
+        { px(i, 0, 'y'); px(i, P-1, 'y'); px(0, i, 'y'); px(P-1, i, 'y'); }
+    },
+};
+
+// the grown tile instances, keyed the same way as the hand-drawn ones
+const OW_TILE_GROWN = {
+    grassA:  { fn:'grass',  accent:'h' },
+    grassB:  { fn:'grass',  accent:'h' },
+    grassC:  { fn:'grass',  accent:'h' },
+    grassTuft:{fn:'tuft',   accent:'h' },
+    flowerA: { fn:'flower', accent:'F' },
+    flowerB: { fn:'flower', accent:'y' },
+    grassPebble:{fn:'pebble', accent:'h' },
+    cobble:  { fn:'cobble', accent:'p' },
+    floorA:  { fn:'floor',  accent:'v' },
+    floorB:  { fn:'floor',  accent:'v' },
+    carpet:  { fn:'carpet', accent:'y' },
+};
+
+///////////////////////////////////////////////////////////////////////////////
+// baking — one canvas + TextureInfo per world, built once at startup
+///////////////////////////////////////////////////////////////////////////////
+
+let owTileSheets = null;                 // { zig:{tex,cells}, zag:{tex,cells} }
+let owTileTried = false;
+let owTileSlots = {};                   // char -> Color, swapped while baking
+let owRoomIndoor = false;                // the live room wants boards, not turf
+
+/** every tile name in the sheet, in bake order */
+function owTileNames()
+{
+    const n = Object.keys(OW_TILE_ART);
+    for (const k in OW_TILE_GROWN) n.push(k);
+    for (let m = 0; m < 16; ++m) n.push('kerb' + m);
+    return n;
+}
+
+/** resolve the OW_TILE_SLOT chars against one world palette */
+function owTileSlotsFor(world)
+{
+    const P = DATA.pal[world] || {}, out = {};
+    for (const ch in OW_TILE_SLOT)
+    {
+        const key = OW_TILE_SLOT[ch];
+        if (key && P[key]) out[ch] = P[key];
+    }
+    return out;
+}
+
+/**
+ * Paint one tile into `data` at tile slot `i` of a sheet `W` texels wide.
+ * `slots` is the resolved char -> Color table for the world being baked.
+ */
+function owPaintTile(data, W, i, name, slots, names)
+{
+    const P = OW_TILE_PX, ox = (i % OW_TILE_COLS)*P, oy = ((i / OW_TILE_COLS)|0)*P;
+    const at = (x, y, ch) =>
+    {
+        const C = slots[ch];
+        if (!C || x < 0 || y < 0 || x >= P || y >= P) return;
+        const k = ((oy+y)*W + ox + x)*4;
+        data[k]   = C.r*255;
+        data[k+1] = C.g*255;
+        data[k+2] = C.b*255;
+        data[k+3] = (C.a === undefined ? 1 : C.a)*255;
+    };
+
+    // path kerb overlays: bit 1 = north/up, 2 = east, 4 = south, 8 = west
+    if (name.indexOf('kerb') === 0)
+    {
+        const open = +name.slice(4), band = 3;
+        for (let i2 = 0; i2 < band; ++i2)
+        {
+            for (let x = 0; x < P; ++x)
+                if (open & 1) at(x, i2, (x == 0 || i2 == 0) ? 's' : 'q');
+            for (let x = 0; x < P; ++x)
+                if (open & 4) at(x, P-1-i2, (x == P-1 || i2 == 0) ? 's' : 'q');
+            for (let y = 0; y < P; ++y)
+                if (open & 8) at(i2, y, (y == 0 || i2 == 0) ? 's' : 'q');
+            for (let y = 0; y < P; ++y)
+                if (open & 2) at(P-1-i2, y, (y == P-1 || i2 == 0) ? 's' : 'q');
+        }
+        return;
+    }
+
+    const grown = OW_TILE_GROWN[name];
+    if (grown)
+    {
+        // each variant gets its own seed, so grass A/B/C never repeat
+        OW_TILE_GEN[grown.fn](at, new RandomGenerator(0x51ED + i*7919 + names.length), grown.accent);
+        return;
+    }
+
+    const src = OW_TILE_ART[name];
+    if (!src) return;
+    const mirrored = !!src.mirror;
+    const def = mirrored ? OW_TILE_ART[src.mirror] : src;
+    if (def.gen) { def.gen(at, new RandomGenerator(0x51ED + i*7919), src.accent); return; }
+
+    for (let y = 0; y < P; ++y)
+    {
+        let row = def.r[y];
+        if (row === undefined) row = def.f.repeat(P);
+        if (mirrored) row = row.split('').reverse().join('');
+        for (let x = 0; x < P; ++x)
+            at(x, y, row[x] === undefined ? def.f : row[x]);
+    }
+}
+
+/** bake one world palette into a pixelated tilesheet (null if no canvas) */
+function owBakeTileSheet(world)
+{
+    if (typeof document == 'undefined' || typeof TextureInfo == 'undefined') return null;
+    const names = owTileNames();
+    const W = OW_TILE_COLS*OW_TILE_PX;
+    const H = Math.ceil(names.length / OW_TILE_COLS)*OW_TILE_PX;
+    const slots = owTileSlotsFor(world);
+
+    let cv = null, ctx = null;
+    try
+    {
+        cv = document.createElement('canvas');
+        if (!cv || !cv.getContext) return null;
+        cv.width = W; cv.height = H;
+        ctx = cv.getContext('2d');
+        if (!ctx) return null;
+    }
+    catch (e) { return null; }
+
+    const data = new Uint8ClampedArray(W*H*4);
+    for (let i = 0; i < names.length; ++i)
+        owPaintTile(data, W, i, names[i], slots, names);
+
+    try
+    {
+        const img = ctx.createImageData ? ctx.createImageData(W, H) : null;
+        if (img) { img.data.set(data); ctx.putImageData(img, 0, 0); }
+        else
+        {
+            // no putImageData on this host — paint the sheet texel by texel
+            ctx.fillStyle = '#000';
+            for (let y = 0; y < H; ++y)
+            for (let x = 0; x < W; ++x)
+            {
+                const k = (y*W + x)*4;
+                if (data[k+3] < 8) continue;
+                ctx.fillStyle = 'rgb(' + data[k] + ',' + data[k+1] + ',' + data[k+2] + ')';
+                ctx.fillRect(x, y, 1, 1);
+            }
+        }
+    }
+    catch (e) { return null; }
+
+    let tex = null;
+    try { tex = new TextureInfo(cv, true, false, true); } catch (e) { tex = null; }
+    if (!tex || !tex.size.x) return null;
+
+    const cells = {};
+    for (let i = 0; i < names.length; ++i)
+        cells[names[i]] = tile(i, vec2(OW_TILE_PX, OW_TILE_PX), tex);
+    return { tex, cells };
+}
+
+/** bake both worlds once — never throws, the flat fallback covers no-canvas hosts */
+function owEnsureTiles()
+{
+    if (owTileSheets || owTileTried) return owTileSheets;
+    owTileTried = true;
+    const sheets = {};
+    for (const world of ['zig', 'zag'])
+    {
+        try { sheets[world] = owBakeTileSheet(world); }
+        catch (e) { sheets[world] = null; }
+    }
+    owTileSheets = sheets.zig && sheets.zag ? sheets : null;
+    return owTileSheets;
+}
+
+/** the TileInfo for a named tile in a world (defaults to the live one) */
+function owTileCell(name, world)
+{
+    const S = owTileSheets;
+    if (!S) return null;
+    const s = S[world || currentWorld];
+    return s ? s.cells[name] || null : null;
+}
+
+/**
+ * Draw one named tile at a world position. During a world switch the outgoing
+ * sheet goes down first and the incoming one over it at owSwitchT, so the two
+ * palettes dissolve into each other exactly like the rest of the world.
+ */
+function owDrawTileAt(name, pos, a, mirror)
+{
+    if (!owTileSheets) return false;
+    let drew = false;
+    const from = owSwitchFromName, blending = from && owSwitchT < 1 && from != currentWorld;
+    if (blending)
+    {
+        const c = owTileCell(name, from);
+        if (c) { drawTile(pos, vec2(1), c, WHITE); drew = true; }
+    }
+    const c = owTileCell(name, currentWorld);
+    if (c)
+    {
+        drawTile(pos, vec2(1), c,
+            a == null ? (blending ? alpha(WHITE, owSwitchT) : WHITE) : alpha(WHITE, a),
+            0, mirror);
+        drew = true;
+    }
+    return drew;
+}
+
+/** draw a named tile onto a map cell */
+function owDrawMapTile(name, tx, ty, a, mirror)
+{
+    return owDrawTileAt(name, tileCenter(tx, ty), a, mirror);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// buildings + street props, drawn from the same tiles as the ground
+//
+// A building grid is listed BOTTOM row first. Row 0 sits on the door's own
+// tile and the middle column is the door's column, so a house always straddles
+// the wall line with its roof standing over the tile the player walks onto.
+// Nothing is drawn on the tile above row 0 in the door column, so the doorway
+// itself stays clear.
+// ---------------------------------------------------------------------------
+
+const OW_BUILDINGS = {
+    // a plain home: a lit window either side of the door under a hip roof
+    home: [
+        ['hwallWin', 'doorBot',  'hwallWinR'],
+        ['hwall',    'hwall',    'hwall'],
+        ['roofL',    'roofC',    'roofR'],
+        ['roof2L',   'roof2C',   'roof2R'],
+    ],
+    // a shop: striped awning over the door, a painted board along the ridge
+    shop: [
+        ['hwallWin', 'doorBot',  'hwallWinR'],
+        ['awning',   'awning',   'awning'],
+        ['roofL',    'roofC',    'roofR'],
+        ['signboard','signboard','signboard'],
+    ],
+    // a venue: twice as wide, lit by a neon band under a long pitch
+    hall: [
+        ['hwall',    'hwallWin', 'doorBot',  'hwallWinR', 'hwall'],
+        ['neonBand', 'neonBand', 'neonBand', 'neonBand',  'neonBand'],
+        ['roofL',    'roofC',    'roofC',    'roofC',     'roofR'],
+        ['roof2L',   'roof2C',   'roof2C',   'roof2C',    'roof2R'],
+    ],
+    // flavour doors that lead nowhere: rusted iron in ZIG, a neon arch in ZAG
+    irongate: [
+        ['ironFoot', 'ironBar', 'ironFoot'],
+        ['ironP',    'ironBar', 'ironP'],
+        ['ironP',    'ironBar', 'ironP'],
+        ['ironP',    'ironBar', 'ironP'],
+    ],
+    neongate: [
+        ['neonFoot', 'neonBar', 'neonFoot'],
+        ['neonP',    'neonBar', 'neonP'],
+        ['neonP',    'neonBar', 'neonP'],
+        ['neonP',    'neonBar', 'neonP'],
+    ],
+};
+
+// street props, offsets in tiles from the decor anchor (+y = up on screen)
+const OW_DECOR_ART = {
+    pylon: [['lampH', 0, 1], ['lampP', 0, 0]],
+    tree:  [['treeT', 0, 2], ['treeM', 0, 1], ['treeB', 0, 0]],
+    bush:  [['bush', 0, 0]],
+    rock:  [['stone', 0, 0]],
+    sign:  [['signB', 0, 1], ['signP', 0, 0]],
+    fence: [['fenceP', 0, 0], ['fenceRail', -1, 0], ['fenceRail', 1, 0]],
+    arch:  [['neonP', -1.5, 0], ['neonP', 1.5, 0],
+            ['neonBar', -1, 1], ['neonBar', 0, 1], ['neonBar', 1, 1]],
+};
+
+/** which building (if any) belongs on this door — null for plain interior exits */
+function owBuildingFor(dr)
+{
+    const dir = dr.def.dir;
+    // a door that opens south or sideways is the inside face of the building on
+    // the far side of the map: you walk out of it, so it gets no house
+    if (dir == 'down' || dir == 'left' || dir == 'right') return null;
+    if (!dr.links() || dr.locked())
+        return currentWorld == 'zag' ? 'neongate' : 'irongate';
+    const to = owRooms[dr.def.to] || {};
+    const tag = (String(dr.def.to) + ' ' + String(to.name || '')).toLowerCase();
+    if (/shop|store|mart|merchant|clerk|mira/.test(tag)) return 'shop';
+    if (/arena|stage|hall|venue|battle|pit|cave|dungeon|gate|neon/.test(tag)) return 'hall';
+    return 'home';
+}
+
+/** draw the building that houses this door; the door tile stays walkable */
+function owDrawBuilding(dr, a)
+{
+    const grid = OW_BUILDINGS[owBuildingFor(dr)];
+    if (!grid) return false;
+    const col = (grid[0].length - 1) >> 1;
+    for (let r = 0; r < grid.length; ++r)
+        for (let c = 0; c < grid[r].length; ++c)
+            if (grid[r][c]) owDrawTileAt(grid[r][c], dr.pos.add(vec2(c - col, r)), a);
+    return true;
+}
+
+/** draw a decor prop (lamp, tree, bush, rock, sign, fence, arch) from tiles */
+function owDrawDecor(kind, p, a)
+{
+    const list = OW_DECOR_ART[kind];
+    if (!list) return false;
+    for (let i = 0; i < list.length; ++i)
+        owDrawTileAt(list[i][0], p.add(vec2(list[i][1], list[i][2])), a);
+    return true;
+}
+///////////////////////////////////////////////////////////////////////////////
 // backdrop — two parallax layers that always cover the screen.
 // Colors come from owPal so a world switch can redraw them into the new sky.
 ///////////////////////////////////////////////////////////////////////////////
@@ -819,10 +1857,43 @@ function makeAmbient()
 
 ///////////////////////////////////////////////////////////////////////////////
 // tile rendering — only the tiles the camera can actually see
-///////////////////////////////////////////////////////////////////////////////
+//
+// Everything here is one drawTile() of a baked 16x16 texel set. Which tile a
+// cell gets is decided by owHash(x, y, salt), so the scatter looks hand
+// placed but never changes between frames.
+//     +y is UP on screen, so the "cap" edge of a wall is the +y neighbour.
+// ---------------------------------------------------------------------------
+
+/** is the map cell solid? (off-map counts as solid: the room has a wall ring) */
+function owCellSolid(tx, ty)
+{
+    return tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H ||
+           tileType(tx, ty) > TILE_PATH;
+}
+
+/** the turf / boards a walkable cell wears, picked once from its hash */
+function owGroundTile(tx, ty)
+{
+    if (owRoomIndoor) return owHash(tx, ty, 4) < .5 ? 'floorA' : 'floorB';
+    const h = owHash(tx, ty, 0);
+    if (h < .46) return 'grassA';
+    if (h < .70) return 'grassB';
+    if (h < .86) return 'grassC';
+    const d = owHash(tx, ty, 1);
+    return d < .40 ? 'grassTuft' : d < .74 ? 'flowerA' : 'grassPebble';
+}
+
+/** 4-bit mask of a road tile's road neighbours: 1 north, 2 east, 4 south, 8 west */
+function owPathMask(tx, ty)
+{
+    const isPath = (x, y)=> tileType(x, y) == TILE_PATH;
+    return (isPath(tx, ty+1) ? 1 : 0) | (isPath(tx+1, ty) ? 2 : 0) |
+           (isPath(tx, ty-1) ? 4 : 0) | (isPath(tx-1, ty) ? 8 : 0);
+}
 
 function renderWorldTiles()
 {
+    owEnsureTiles();
     const half = mainCanvasSize.scale(.5 / cameraScale);
     const tx0 = clamp(Math.floor(cameraPos.x - half.x + WORLD_W/2) - 1, 0, WORLD_W-1);
     const tx1 = clamp(Math.floor(cameraPos.x + half.x + WORLD_W/2) + 1, 0, WORLD_W-1);
@@ -838,82 +1909,44 @@ function renderWorldTiles()
         if (tileType(tx, ty) >  TILE_PATH) drawWorldTile(tx, ty);
 }
 
-// little grass detail: ZIG gets scribbled blades, ZAG gets neon crosshatch
-function drawGrassDetail(tx, ty, p)
-{
-    const P = owPal;
-    const zag = currentWorld == 'zag';
-    const count = 2 + (owHash(tx, ty, 0) * 2 | 0);        // 2 or 3 tufts
-    for (let i = 0; i < count; ++i)
-    {
-        const fx = (owHash(tx, ty, 1 + i) * .72 + .14) - .5;
-        const fy = (owHash(tx, ty, 6 + i) * .62 + .19) - .5;
-        const a = p.add(vec2(fx, fy));
-        if (zag)
-        {
-            // magenta crosshatch tick
-            const s = .05 + owHash(tx, ty, 9 + i) * .03;
-            drawLine(a.add(vec2(-s, -s)), a.add(vec2(s, s)), .026, alpha(P.grassTuft, .9));
-            drawLine(a.add(vec2(-s,  s)), a.add(vec2(s, -s)), .026, alpha(P.grassTuft, .7));
-        }
-        else
-        {
-            // a couple of dark blades, 2-3 px tall at hub zoom
-            const h = .06 + owHash(tx, ty, 9 + i) * .035;
-            drawLine(a, a.add(vec2(0, h)), .028, P.grassTuft);
-            drawLine(a.add(vec2(.045, 0)), a.add(vec2(.05, h*.7)), .02, alpha(P.grassTuft, .8));
-        }
-    }
-}
-
 function drawWorldTile(tx, ty)
 {
-    const P = owPal, t = tileType(tx, ty), p = tileCenter(tx, ty);
+    const t = tileType(tx, ty);
+    const flip = owHash(tx, ty, 7) < .5;
 
     if (t == TILE_FLOOR)
     {
-        const alt = ((tx*7 + ty*13) & 3) == 0;
-        drawRect(p, vec2(1), alt ? P.grassAlt : P.grass);
-        drawGrassDetail(tx, ty, p);
+        if (!owDrawMapTile(owGroundTile(tx, ty), tx, ty)) owFlatTile(tx, ty, t);
     }
     else if (t == TILE_PATH)
     {
-        drawRect(p, vec2(1), P.path);
-        // the zig-zag motif: a slash on every tile, flipped on its neighbour
-        const up = ((tx + ty) & 1) == 0;
-        const a = p.add(vec2(up ? -.42 : .42, -.42));
-        const b = p.add(vec2(up ?  .42 : -.42, .42));
-        drawLine(a, b, .13, alpha(P.pathSlash, .45));
-        drawLine(a, b, .05, alpha(P.pathSlash, .85));
-        // bright kerb on the long edges
-        drawRect(p.add(vec2(0, .47)), vec2(1, .06), alpha(P.pathEdge, .8));
-        drawRect(p.add(vec2(0, -.47)), vec2(1, .06), alpha(P.pathEdge, .8));
+        if (!owDrawMapTile(owRoomIndoor ? 'carpet' : 'cobble', tx, ty))
+        { owFlatTile(tx, ty, t); return; }
+        // a kerb wherever the road does NOT continue — the edge of the path
+        const open = 15 & ~owPathMask(tx, ty);
+        if (open) owDrawMapTile('kerb' + open, tx, ty);
     }
     else if (t == TILE_WALL)
     {
-        drawRect(p, vec2(1), P.wall);
-        drawRect(p.add(vec2(0, .3)), vec2(1, .4), P.wallTop);
-        // zig-zag border along the cap (the town's motif, stamped on every wall)
-        const pts = [];
-        for (let i = 0; i <= 4; ++i)
-            pts.push(p.add(vec2(-.5 + i*.25, .45 + (i % 2 ? -.07 : .07))));
-        drawLineList(pts, .05, alpha(P.wallEdge, .95));
-        drawLineList(pts, .02, alpha(DATA.c.ink, .12));
-        // ground shadow
-        drawRect(p.add(vec2(0, -.49)), vec2(1, .05), alpha(P.shade, .55));
+        // the lit ledge rides the top (+y) edge, where the sky meets the stone
+        const cap = !owCellSolid(tx, ty+1);
+        if (!owDrawMapTile(cap ? 'brickCap' : 'brick', tx, ty, null, flip))
+            owFlatTile(tx, ty, t);
     }
-    else // TILE_BLOCK
+    else    // TILE_BLOCK
     {
-        drawRect(p, vec2(1), P.block);
-        drawRect(p.add(vec2(0, .32)), vec2(1, .36), P.blockTop);
-        const pts = [];
-        for (let i = 0; i <= 4; ++i)
-            pts.push(p.add(vec2(-.5 + i*.25, .47 + (i % 2 ? -.07 : .07))));
-        drawLineList(pts, .055, alpha(P.wallEdge, .95));
-        drawRect(p.add(vec2(0, -.49)), vec2(1, .05), alpha(P.shade, .6));
-        // a lit inner face so blocks read as solid, not flat
-        drawRect(p.add(vec2(0, .1)), vec2(.7, .06), alpha(P.accent, .22));
+        if (!owDrawMapTile('crate', tx, ty, null, flip)) owFlatTile(tx, ty, t);
     }
+}
+
+/** flat stand-in, used only when the host cannot bake a tilesheet */
+function owFlatTile(tx, ty, t)
+{
+    const P = owPal;
+    if (t == TILE_PATH)       drawRect(tileCenter(tx, ty), vec2(1), P.path);
+    else if (t == TILE_WALL)  drawRect(tileCenter(tx, ty), vec2(1), P.wall);
+    else if (t == TILE_BLOCK) drawRect(tileCenter(tx, ty), vec2(1), P.block);
+    else                      drawRect(tileCenter(tx, ty), vec2(1), P.grass);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -930,6 +1963,9 @@ class WorldFloor extends EngineObject
     render() { renderWorldTiles(); }
 }
 
+// A decor prop is a little stack of baked tiles standing on its anchor tile.
+// Trees, bushes, rocks, fences, signposts and lamp posts all come out of the
+// same 16x16 sheet as the ground, so the whole map is one pixel language.
 class WorldDecor extends EngineObject
 {
     constructor(d)
@@ -942,40 +1978,50 @@ class WorldDecor extends EngineObject
     render()
     {
         const P = owPal, C = DATA.c, p = this.pos;
-        if (this.kind == 'pylon')
+        const pulse = .5 + .5*sin(time*1.8 + this.seed);
+
+        if (this.kind == 'arch')
         {
-            const pulse = .6 + .4*sin(time*2 + this.seed);
-            // shadow + post
-            drawEllipse(p.add(vec2(0, -.42)), vec2(.9, .34), alpha(P.shade, .55));
-            drawRect(p.add(vec2(0, -.05)), vec2(.3, .9), P.wallTop);
-            drawRect(p.add(vec2(0, .42)), vec2(.5, .16), P.blockTop);
-            // glowing head
-            setAdditiveBlendMode(true);
-            drawCircle(p.add(vec2(0, .55)), .55 + pulse*.15, alpha(P.accent, .16 + pulse*.12));
-            setAdditiveBlendMode(false);
-            drawCircle(p.add(vec2(0, .55)), .22, P.accent);
-            drawCircle(p.add(vec2(0, .55)), .1, P.shade);
-        }
-        else if (this.kind == 'arch')
-        {
-            const pulse = .5 + .5*sin(time*1.6);
-            const legs = [-1.6, 1.6];
-            for (const lx of legs)
+            // the stage arch over the arena door — neon posts, neon lintel
+            if (!owDrawDecor('arch', p, 1))
             {
-                drawRect(p.add(vec2(lx, .4)), vec2(.5, 3.4), P.wallTop);
-                drawRect(p.add(vec2(lx, 2.15)), vec2(.7, .18), alpha(P.accent, .8));
+                for (const lx of [-1.5, 1.5])
+                    drawRect(p.add(vec2(lx, .5)), vec2(.6, 3.4), P.wallTop);
             }
-            // the zig-zag bar across the top
-            const pts = [];
-            for (let i = 0; i <= 8; ++i)
-                pts.push(p.add(vec2(-1.6 + i*.4, 2.1 + (i % 2 ? .45 : 0))));
-            drawLineList(pts, .16, alpha(P.accent, .35 + pulse*.35));
-            drawLineList(pts, .07, P.wallEdge);
             setAdditiveBlendMode(true);
-            drawRect(p.add(vec2(0, 2.3)), vec2(4.4, 1.6), alpha(P.accent, .05 + pulse*.05));
+            drawRect(p.add(vec2(0, 1.6)), vec2(4.4, 2.4), alpha(P.accent, .05 + pulse*.06));
             setAdditiveBlendMode(false);
             drawText('STAGE 01', p.add(vec2(0, 3.1)), .5, C.gold, .04, P.shade, 'center', DATA.ui.font);
+            return;
         }
+
+        if (this.kind == 'pylon')
+        {
+            // lamp post: the tiles carry the post, the halo is the only glow
+            if (owDrawDecor('pylon', p, 1)) return;
+            drawEllipse(p.add(vec2(0, -.42)), vec2(.9, .34), alpha(P.shade, .55));
+            drawRect(p.add(vec2(0, -.05)), vec2(.3, .9), P.wallTop);
+            drawCircle(p.add(vec2(0, .55)), .22, P.accent);
+            return;
+        }
+
+        if (OW_DECOR_ART[this.kind])
+        {
+            // a soft contact shadow under anything that stands on the ground
+            if (this.kind != 'fence')
+                drawEllipse(p.add(vec2(0, -.44)), vec2(.55, .2), alpha(P.shade, .4));
+            owDrawDecor(this.kind, p, 1);
+            return;
+        }
+
+        // unknown decor kind from an authored world — keep the old lamp-post read
+        drawEllipse(p.add(vec2(0, -.42)), vec2(.9, .34), alpha(P.shade, .55));
+        drawRect(p.add(vec2(0, -.05)), vec2(.3, .9), P.wallTop);
+        drawRect(p.add(vec2(0, .42)), vec2(.5, .16), P.blockTop);
+        setAdditiveBlendMode(true);
+        drawCircle(p.add(vec2(0, .55)), .55 + pulse*.15, alpha(P.accent, .16 + pulse*.12));
+        setAdditiveBlendMode(false);
+        drawCircle(p.add(vec2(0, .55)), .22, P.accent);
     }
 }
 
@@ -1109,20 +2155,38 @@ class WorldDoor extends EngineObject
         // ground shadow
         drawEllipse(p.add(vec2(0, -.5)), vec2(1.3, .5), alpha(P.shade, .55*a));
 
-        // the frame
-        drawRect(p.add(vec2(0, .25)), vec2(1.15, 1.75), alpha(P.wall, a));
-        drawRect(p.add(vec2(0, 1.02)), vec2(1.3, .3), alpha(P.wallTop, a));
-        // zigzag trim on the frame cap
-        const pts = [];
-        for (let i = 0; i <= 4; ++i)
-            pts.push(p.add(vec2(-.6 + i*.3, 1.16 + (i % 2 ? -.08 : .08))));
-        drawLineList(pts, .05, alpha(P.wallEdge, .95*a));
+        // the building the door is set into — walls, pitch, a shop awning or
+        // a gate. It stands behind and above the door tile, never across it.
+        const housed = owDrawBuilding(this, a);
 
-        // the door slab
+        if (!housed)
+        {
+            // a free-standing frame: the inside face of a building on the far
+            // side of the map, so you walk OUT through it
+            drawRect(p.add(vec2(0, .25)), vec2(1.15, 1.75), alpha(P.wall, a));
+            drawRect(p.add(vec2(0, 1.02)), vec2(1.3, .3), alpha(P.wallTop, a));
+            const pts = [];
+            for (let i = 0; i <= 4; ++i)
+                pts.push(p.add(vec2(-.6 + i*.3, 1.16 + (i % 2 ? -.08 : .08))));
+            drawLineList(pts, .05, alpha(P.wallEdge, .95*a));
+        }
+
+        // the doorway itself — the only art that ever sits over the door tile
         const lock = this.lockFlash;
-        const slab = open ? P.doorOpen : P.door;
-        drawRect(p.add(vec2(0, .2)), vec2(.82, 1.35), alpha(slab, (.92 - .25*pulse)*a));
-        drawRect(p.add(vec2(0, .2)), vec2(.6, 1.2), alpha(P.shade, (open ? .18 : .45)*a));
+        if (housed)
+        {
+            // the tiles already drew the door; tint the panel toward its state
+            // so an open door reads green and a locked one reads shut
+            drawRect(p.add(vec2(0, -.02)), vec2(.44, .62),
+                alpha(doorCol, (.16 + .12*pulse)*a));
+            drawRect(p.add(vec2(0, -.02)), vec2(.30, .52),
+                alpha(P.shade, (open ? .12 : .34)*a));
+        }
+        else
+        {
+            drawRect(p.add(vec2(0, .2)), vec2(.82, 1.35), alpha(doorCol, (.92 - .25*pulse)*a));
+            drawRect(p.add(vec2(0, .2)), vec2(.6, 1.2), alpha(P.shade, (open ? .18 : .45)*a));
+        }
         // handle
         drawCircle(p.add(vec2(.24, .18)), .07, alpha(DATA.c.ink, .8*a));
 

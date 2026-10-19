@@ -1,7 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////
-// MuZiC "Switch" — hud.js
-// Every overlay the player reads: title, hub, play field and results.
-// All of it is drawn in screen space (origin top-left, y grows downward).
+// MuZiC Switch — hud.js
+// The two gameplay HUDs (overworld hub + rhythm field) and the one panel the
+// OG DOM menu does not have: the E inventory drawer.
+// There is deliberately NO title screen, NO results screen and NO pause menu
+// here — index.html + js/menu.js own every menu. All of this is drawn in screen
+// space (origin top-left, y grows downward).
 ///////////////////////////////////////////////////////////////////////////////
 
 const HUD = {
@@ -12,13 +15,12 @@ const HUD = {
     judgeColor: null,
     scoreShown: 0,
 
-    // ---- overlays (E = inventory, R = pause menu) ---------------------------
-    overlay: null,          // null | 'inventory' | 'pause'
-    overlayT: 0,            // seconds since the panel opened (entrance anim)
-    overlaySel: 0,          // pause-menu selection index
-    overlayMsg: '',         // transient footer message ('settings coming soon')
+    // ---- the E inventory drawer --------------------------------------------
+    overlay: null,          // null | 'inventory'
+    overlayT: 0,            // seconds since the drawer opened (entrance anim)
+    overlayMsg: '',         // transient footer message
     overlayMsgT: 0,
-    overlayLatch: false,    // swallow the key that opened/closed the panel
+    overlayLatch: false,    // swallow the key that opened/closed the drawer
     lastUpdateFrame: -1,    // frame de-dup so updateOverlays() is idempotent
     mask: null,             // movement keys saved+zeroed for this frame
     maskTick: -1,           // HUD.tick the mask was taken on (staleness check)
@@ -34,7 +36,7 @@ function hudInit()
     HUD.t = 0; HUD.comboPop = 0; HUD.judgePop = 0;
     HUD.judgeText = ''; HUD.judgeColor = DATA.c.ink;
     HUD.scoreShown = 0;
-    HUD.overlay = null; HUD.overlayT = 0; HUD.overlaySel = 0;
+    HUD.overlay = null; HUD.overlayT = 0;
     HUD.overlayMsg = ''; HUD.overlayMsgT = 0; HUD.overlayLatch = false;
     HUD.lastUpdateFrame = -1; HUD.mask = null; HUD.maskTick = -1;
     hudHookPostUpdate();
@@ -55,9 +57,9 @@ function hudUpdate()
     HUD.comboPop = Math.max(0, HUD.comboPop - timeDelta*3.2);
     HUD.judgePop  = Math.max(0, HUD.judgePop  - timeDelta*2.4);
     HUD.scoreShown = lerp(HUD.scoreShown, score, .18);
-    // the locked control scheme (Q/E/R) — handled here so it works with no
-    // extra wiring in littlejs-game.js; updateOverlays() is frame-idempotent
-    // so an explicit call there too is harmless.
+    // the locked control scheme (Q quit / E inventory) — handled here so it works
+    // with no extra wiring in littlejs-game.js; updateOverlays() is frame-
+    // idempotent so an explicit call there too is harmless.
     HUD.updateOverlays(timeDelta);
     if (HUD.overlay) HUD.overlayT += timeDelta;
 }
@@ -149,114 +151,6 @@ function uiVignette(strength)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// TITLE
-///////////////////////////////////////////////////////////////////////////////
-
-function hudTitle()
-{
-    const S = mainCanvasSize, C = DATA.c, cx = S.x/2;
-
-    // sky
-    drawRectGradient(vec2(S.x/2, S.y/2), S, C.bgTop, C.bgBot, 0, true, true);
-
-    // drifting zig-zag bands behind everything
-    for (let i = 0; i < 6; ++i)
-    {
-        const dir = i % 2 ? 1 : -1;
-        const y = S.y*(i + .7)/7 + sin(HUD.t*.5 + i*1.7)*22;
-        const step = 110 + i*22, amp = 10 + i*5;
-        const pts = [], off = mod(HUD.t*26*dir, step*2) - step*2;
-        for (let x = off; x < S.x + step*2; x += step)
-        {
-            pts.push(vec2(x, y));
-            pts.push(vec2(x + step/2, y + (i % 2 ? amp : -amp)));
-        }
-        uiZig(pts, 1 + i*.5, alpha(i % 2 ? C.neon : C.cyan, .10 + i*.025));
-    }
-    uiVignette(.6);
-
-    // ---- logo ---------------------------------------------------------------
-    // the game title is 13 chars now — shrink to fit, and cap the width
-    const logoY = S.y*.30;
-    const word = 'MuZiC "Switch"',
-          opts = { align:'center', font: DATA.ui.font, style:'900',
-                   maxWidth: S.x*.86 };
-    const titleSize = clamp(S.x*.076, 30, 76);
-    const jitter = sin(HUD.t*8)*.6;
-    uiSpaced(word, cx - 6, logoY + 6, titleSize, alpha(C.cyan, .55), titleSize*.045, opts);
-    uiSpaced(word, cx + 6, logoY - 4, titleSize, alpha(C.neon, .6), titleSize*.045, opts);
-    uiSpaced(word, cx + jitter, logoY, titleSize, C.ink, titleSize*.045,
-        Object.assign({ lineWidth: titleSize*.16, lineColor: C.bg }, opts));
-
-    // the rule under the logo is itself a zig-zag
-    const ruleW = Math.min(S.x*.62, titleSize*6.4);
-    uiZigRule(cx - ruleW/2, cx + ruleW/2, logoY + titleSize*.78,
-        14, titleSize*.07, 4, alpha(C.neon, .55));
-    uiZigRule(cx - ruleW/2, cx + ruleW/2, logoY + titleSize*.78,
-        14, titleSize*.07, 1.5, C.cyan);
-
-    uiSpaced('SYNTH', cx, logoY + titleSize*1.16, titleSize*.34, C.cyan,
-        titleSize*.16, { align:'center', font: DATA.ui.font, style:'900',
-            lineWidth: titleSize*.05, lineColor: C.bg });
-    uiText('PJSK  ×  PIANO TILES   ·   LITTLEJS JAM 3', cx, logoY + titleSize*1.52,
-        clamp(titleSize*.15, 11, 17), alpha(C.dim, .95),
-        { align:'center', font: DATA.ui.soft });
-
-    // ---- the character ------------------------------------------------------
-    if (S.x > 720)
-        drawTetoScreen(vec2(S.x*.13, S.y*.315), clamp(S.x*.15, 96, 190));
-    else
-        drawTetoScreen(vec2(cx, S.y*.075), clamp(S.x*.13, 70, 130));
-
-    // ---- start prompt -------------------------------------------------------
-    // short viewports tuck everything upward so panels never collide
-    const snug = S.y < 440;
-    const promptY = snug ? S.y*.52 : S.y*.615;
-    const pulse = .55 + .45*sin(HUD.t*3.4);
-    const wide = Math.min(S.x*.72, 560);
-    uiPanel(cx - wide/2, promptY - 30, wide, 60, alpha(C.neon, .5 + pulse*.4), 20);
-    uiText('PRESS  ENTER   /   TAP  TO  START', cx, promptY, clamp(S.x*.026, 15, 26),
-        alpha(C.ink, .55 + pulse*.45),
-        { align:'center', font: DATA.ui.font, style:'900' });
-
-    // chevrons that nudge downward
-    for (let i = 0; !snug && i < 2; ++i)
-    {
-        const yy = promptY + 46 + i*13 + mod(HUD.t*30, 13);
-        const a = alpha(C.cyan, .7 - i*.3);
-        uiZig([vec2(cx - 10, yy), vec2(cx, yy + 7), vec2(cx + 10, yy)], 3, a);
-    }
-
-    // ---- controls -----------------------------------------------------------
-    const ch = snug ? 66 : 92;
-    const cy2 = snug ? S.y - ch/2 - 46 : S.y*.80, cw = Math.min(S.x*.86, 660);
-    uiPanel(cx - cw/2, cy2 - ch/2, cw, ch, alpha(C.cyan, .35), 16);
-    const row = snug ? [-14, 4, 22] : [-18, 6, 30];
-    uiText('WALK', cx - cw/2 + 26, cy2 + row[0], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
-    uiText('ARROWS  /  WASD', cx + cw/2 - 26, cy2 + row[0], 16, C.ink,
-        { align:'right', font: DATA.ui.font });
-    uiText('HOLD + TAP NOTES', cx - cw/2 + 26, cy2 + row[1], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
-    uiText('← →   ·   ↑ FLICK   ·   ↓ SWAP', cx + cw/2 - 26, cy2 + row[1], 16, C.neonSoft,
-        { align:'right', font: DATA.ui.font });
-    uiText('ENTER THE STAGE', cx - cw/2 + 26, cy2 + row[2], 14, alpha(C.dim, .9), { font: DATA.ui.soft });
-    uiText('WALK IN  ·  SPACE', cx + cw/2 - 26, cy2 + row[2], 16, C.cyan,
-        { align:'right', font: DATA.ui.font });
-
-    // ---- best ---------------------------------------------------------------
-    if (best > 0)
-        uiText('BEST  ' + String(best).padStart(6, '0'), cx, S.y*.955, 17,
-            alpha(C.gold, .9), { align:'center', font: DATA.ui.font });
-}
-
-// the same character on the title card: park the camera math and borrow drawTeto
-function drawTetoScreen(pos, sizePx)
-{
-    const scale = sizePx / (.9 * cameraScale);
-    drawTeto(screenToWorld(pos), scale, HUD.t*3, 1, sin(HUD.t*.8)*.07,
-        1 + sin(HUD.t*2.6)*.04, 1 - sin(HUD.t*2.6)*.04, 0, 0);
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // WORLD HUB
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -275,7 +169,7 @@ function hudWorld()
     // ---- logo chip, top left ------------------------------------------------
     uiPanel(16, 14, 208, 54, alpha(C.neon, .45), 14);
     uiText('MuZiC', 34, 32, 20, C.ink, { font: DATA.ui.font, style:'900' });
-    uiText('"SWITCH"', 34, 52, 12, C.cyan, { font: DATA.ui.font, style:'900' });
+    uiText('SWITCH', 34, 52, 12, C.cyan, { font: DATA.ui.font, style:'900' });
     uiZig([vec2(150, 26), vec2(162, 38), vec2(174, 26), vec2(186, 38), vec2(198, 26)],
         2.5, alpha(C.neon, .8));
 
@@ -316,7 +210,7 @@ function hudWorld()
         uiText(roomName.toUpperCase(), S.x/2, 86, 13, alpha(C.dim, .75),
             { align:'center', font: DATA.ui.font });
 
-    // ---- control hints, bottom left (hidden while a dialog or panel is up) --
+    // ---- control hints, bottom left (hidden while a dialog or the drawer is up)
     if (!talking && !HUD.overlay)
     {
         const hy = S.y - 112;
@@ -326,14 +220,12 @@ function hudWorld()
         uiText('↓', 176, hy + 18, 14, accent, { font: DATA.ui.font, style:'900' });
         uiText('Inventory', 24, hy + 36, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
         uiText('E', 176, hy + 36, 14, C.gold, { font: DATA.ui.font, style:'900' });
-        uiText('Menu', 24, hy + 54, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('R / ESC', 176, hy + 54, 14, alpha(C.ink, .9), { font: DATA.ui.font, style:'900' });
+        uiText('Main menu', 24, hy + 54, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('Q', 176, hy + 54, 14, C.bad, { font: DATA.ui.font, style:'900' });
         uiText('Interact', 24, hy + 72, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
         uiText('ENTER', 176, hy + 72, 14, C.cyan, { font: DATA.ui.font, style:'900' });
         uiText('Talk', 24, hy + 90, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
         uiText('SPACE', 176, hy + 90, 14, C.neonSoft, { font: DATA.ui.font, style:'900' });
-        uiText('Quit to title', 24, hy + 108, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
-        uiText('Q', 176, hy + 108, 14, C.bad, { font: DATA.ui.font, style:'900' });
     }
 
     // ---- the portal prompt --------------------------------------------------
@@ -355,7 +247,7 @@ function hudWorld()
     }
 
     uiFlash();
-    HUD.renderOverlay();       // E inventory / R menu — always on top
+    HUD.renderOverlay();       // E inventory drawer — on top of the HUD
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -413,7 +305,7 @@ function hudPlay()
     hudPlayVitals();
 
     uiFlash();
-    HUD.renderOverlay();       // R pause menu / E inventory — always on top
+    HUD.renderOverlay();       // E inventory drawer — on top of the HUD
 }
 
 /** the compact HP/level chip for the rhythm field (world uses hudStatusChip) */
@@ -431,79 +323,8 @@ function hudPlayVitals()
         frac > .22 ? C.ink : C.bad, { align:'right', font: DATA.ui.font, style:'900' });
     uiText('Lv. ' + ps.level, x + 14, y + 38, 13, C.gold,
         { font: DATA.ui.font, style:'900' });
-    uiText('Q QUIT', x + w - 14, y + 38, 11, alpha(C.dim, .8),
+    uiText('Q MENU', x + w - 14, y + 38, 11, alpha(C.dim, .8),
         { align:'right', font: DATA.ui.font, style:'900' });
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// RESULTS
-///////////////////////////////////////////////////////////////////////////////
-
-function hudResults()
-{
-    const S = mainCanvasSize, C = DATA.c;
-    const w = Math.min(S.x*.88, 640), h = Math.min(S.y - 20, clamp(S.y*.88, 330, 560));
-    const x = S.x/2 - w/2, y = S.y/2 - h/2;
-    const k = h/560;                       // vertical squeeze on short screens
-
-    // dim the field behind
-    drawRect(vec2(S.x/2, S.y/2), S, alpha(C.bg, .72), 0, true, true);
-    uiZigRule(-40, S.x + 40, y - 26, 26, 7, 3, alpha(C.neon, .5));
-
-    uiPanel(x, y, w, h, alpha(C.neon, .55), 26);
-
-    const cleared = score > 0 && (counts[0] + counts[1]) > 0;
-    uiSpaced(cleared ? 'STAGE CLEAR' : 'STAGE MISS', S.x/2, y + 50*k,
-        clamp(w*.115, 24, 46), cleared ? C.gold : C.bad, 4,
-        { align:'center', font: DATA.ui.font, style:'900',
-          lineWidth: 6, lineColor: alpha(C.bg, .85) });
-
-    // big score
-    uiText(String(score).padStart(6, '0'), S.x/2, y + 116*k, clamp(w*.15, 38, 72), C.ink,
-        { align:'center', font: DATA.ui.font, style:'900',
-          lineWidth: 7, lineColor: alpha(C.bg, .8) });
-    uiText('SCORE', S.x/2, y + 152*k, 13, alpha(C.dim, .9),
-        { align:'center', font: DATA.ui.font });
-
-    // stat rows
-    const rowX = x + 46, rowW = w - 92, step = 34*k;
-    let ry = y + 196*k;
-    uiRow(rowX, ry, rowW, 'MAX COMBO', String(maxCombo), C.cyan, false, k); ry += step;
-    const names = ['PERFECT', 'GREAT', 'GOOD', 'MISS'];
-    for (let i = 0; i < 4; ++i)
-    {
-        uiRow(rowX, ry, rowW, names[i], String(counts[i]), DATA.c.judge[i], false, k);
-        ry += step;
-    }
-
-    // best
-    ry += 8*k;
-    const isBest = score >= best && score > 0;
-    drawRect(vec2(S.x/2, ry + 4), vec2(rowW, 32*k), alpha(isBest ? C.gold : C.cyan, .12), 0, true, true);
-    uiText('BEST', rowX, ry, Math.max(11, 15*k), alpha(C.dim, .95), { font: DATA.ui.font });
-    uiText(String(best).padStart(6, '0'), rowX + rowW, ry + 2*k, Math.max(16, 24*k), C.gold,
-        { align:'right', font: DATA.ui.font, style:'900' });
-    if (isBest)
-        uiText('NEW BEST!', rowX + rowW, ry + 25*k, Math.max(10, 12*k), C.gold,
-            { align:'right', font: DATA.ui.font, style:'900' });
-
-    // prompt
-    const pulse = .55 + .45*sin(HUD.t*3.4);
-    uiText('PRESS  SPACE   /   TAP  TO  RETURN', S.x/2, y + h - 30,
-        clamp(w*.042, 13, 20), alpha(C.ink, .5 + pulse*.5),
-        { align:'center', font: DATA.ui.font, style:'900' });
-
-    uiFlash();
-    HUD.renderOverlay();
-}
-
-function uiRow(x, y, w, label, value, color, big, k=1)
-{
-    const C = DATA.c;
-    uiText(label, x, y, (big ? 22 : 18)*k, alpha(C.dim, .95), { font: DATA.ui.font });
-    uiText(value, x + w, y + (big ? 3 : 2)*k, (big ? 30 : 22)*k, color,
-        { align:'right', font: DATA.ui.font, style:'900' });
-    drawLine(vec2(x, y + 15*k), vec2(x + w, y + 15*k), 1, alpha(C.cyan, .14), vec2(), 0, true, true);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -579,15 +400,14 @@ function hudStatusChip()
             { align:'right', font: DATA.ui.soft });
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// OVERLAYS — E inventory, R pause menu, Q quit   (BUGS 5 + 8)
+// E inventory drawer, Q quit   (BUGS 5 + 8)
 //
 // Everything is self-contained in hud.js so littlejs-game.js / overworld.js
-// never need to change. The panels draw from hudWorld()/hudPlay()/hudResults()
-// (all already called by gameRenderPost) and the keys are polled from
-// hudUpdate() (already called by gameUpdate). The API below is what the
-// orchestrator may wire explicitly; every call is frame-idempotent.
-///////////////////////////////////////////////////////////////////////////////
+// never need to change. The drawer is drawn from hudWorld()/hudPlay() (both
+// already called by gameRenderPost) and the keys are polled from hudUpdate()
+// (already called by gameUpdate). There is NO pause menu here: the OG DOM menu
+// (index.html + js/menu.js) owns pause, settings and the title.
+/////////////////////////////////////////////////////////////////////////////
 
 function hudDialogBusy()
 {
@@ -599,32 +419,21 @@ function hudState()
     return typeof state != 'undefined' ? state : '';
 }
 
-/** is any HUD overlay on screen right now? */
+/** is the HUD drawer on screen right now? */
 HUD.overlayOpen = function () { return HUD.overlay !== null; };
 
-/** E — toggle the inventory panel */
+/** E — toggle the inventory drawer */
 HUD.showInventory = function (byKey)
 {
     if (!hudOverlaysAllowed()) return false;
     if (HUD.overlay == 'inventory') { HUD.hideOverlays(byKey); return false; }
-    HUD.overlay = 'inventory'; HUD.overlaySel = 0; HUD.overlayT = 0;
+    HUD.overlay = 'inventory'; HUD.overlayT = 0;
     HUD.overlayLatch = byKey || 'KeyE';
     return true;
 };
 
-/** R — toggle the pause menu */
-HUD.showPauseMenu = function (byKey)
-{
-    if (!hudOverlaysAllowed()) return false;
-    if (HUD.overlay == 'pause') { HUD.hideOverlays(byKey); return false; }
-    HUD.overlay = 'pause'; HUD.overlaySel = 0; HUD.overlayT = 0;
-    HUD.overlayLatch = byKey || 'KeyR';
-    return true;
-};
-
-/** overlays only exist where the locked scheme allows them: no dialog up,
- *  not on the title screen, and not on results (where SPACE already means
- *  "return to the hub", so a menu would fight it) */
+/** the drawer only exists where the locked scheme allows it: no dialog up, and
+ *  never in 'idle' — there the DOM menu owns the screen. */
 function hudOverlaysAllowed()
 {
     if (hudDialogBusy()) return false;
@@ -632,80 +441,26 @@ function hudOverlaysAllowed()
     return s == 'world' || s == 'play';
 }
 
-/** close whatever overlay is open. `byKey` latches the closing key so the
- *  very same physical press can never immediately reopen the panel. */
+/** close the drawer. `byKey` latches the closing key so the very same physical
+ *  press can never immediately reopen the drawer. */
 HUD.hideOverlays = function (byKey)
 {
     if (!HUD.overlay) return false;
-    HUD.overlay = null; HUD.overlayT = 0; HUD.overlaySel = 0;
+    HUD.overlay = null; HUD.overlayT = 0;
     HUD.overlayLatch = byKey || false;
     return true;
 };
 
-/** Q — back to the title screen (world + play only) */
-HUD.quitToTitle = function ()
+/** Q — hand the screen back to the OG DOM menu (there is no canvas title screen
+ *  left to go to). No-op if the engine file is not loaded. */
+HUD.quitToTitle = function (screen)
 {
     const s = hudState();
-    if (s != 'world' && s != 'play' && s != 'results') return false;
+    if (s != 'world' && s != 'play') return false;
     HUD.hideOverlays();
-    if (typeof setState == 'function') setState('title');
+    if (typeof zzLaneRelease == 'function') zzLaneRelease(screen || 'menu');
     return true;
 };
-
-// the pause menu's row actions
-HUD.PAUSE_ITEMS = ['RESUME', 'RESTART STAGE', 'SETTINGS', 'QUIT TO TITLE'];
-
-function hudPauseAction(i)
-{
-    const s = hudState();
-    switch (i)
-    {
-        case 0: HUD.hideOverlays(); break;
-        case 1:                                     // restart the stage / hub
-            HUD.hideOverlays();
-            hudResetPlayer();
-            if (typeof setState == 'function') setState('world');
-            break;
-        case 2:
-            if (hudOpenSettingsScreen()) HUD.hideOverlays();
-            else HUD.flash('SETTINGS — COMING SOON');
-            break;
-        case 3:
-            HUD.quitToTitle(); break;
-    }
-}
-
-/** full heal + level-1 reset of the shared player state */
-function hudResetPlayer()
-{
-    const ps = hudPlayerState();
-    ps.hp = ps.maxHp; ps.exp = 0;
-    try { if (typeof battlePlayer != 'undefined' && battlePlayer) battlePlayer.hp = battlePlayer.maxHp; }
-    catch (e) {}
-}
-
-/** hand off to the DOM settings screen if the menu lane exposes one */
-function hudOpenSettingsScreen()
-{
-    try
-    {
-        if (typeof ZZ != 'undefined' && ZZ)
-        {
-            for (const k of ['openSettings', 'showSettings', 'settings'])
-                if (typeof ZZ[k] == 'function') { ZZ[k](); return true; }
-        }
-        if (typeof openSettingsScreen == 'function') { openSettingsScreen(); return true; }
-        const el = typeof document != 'undefined' &&
-            (document.getElementById('settings') || document.getElementById('settings-screen'));
-        if (el)
-        {
-            if (el.showModal) el.showModal(); else el.hidden = false;
-            return true;
-        }
-    }
-    catch (e) {}
-    return false;
-}
 
 HUD.flash = function (msg, secs)
 {
@@ -714,11 +469,11 @@ HUD.flash = function (msg, secs)
 };
 
 /**
- * Per-frame overlay input. Q quit / E inventory / R menu / Esc close-or-menu,
- * plus arrow-key nav + Enter confirm inside the pause menu.
- * Safe to call more than once per frame — only the first call acts.
- * Whatever the outcome, the movement keys get masked for the rest of the
- * frame so gameplay code can't steal an input the panel owns.
+ * Per-frame overlay input. Q hands the screen back to the DOM menu, E opens
+ * the inventory drawer, Esc closes it. Safe to call more than once per frame —
+ * only the first call acts. Whatever the outcome, the movement keys get masked
+ * for the rest of the frame so gameplay code can't steal an input the drawer
+ * owns.
  */
 HUD.updateOverlays = function (dt)
 {
@@ -761,8 +516,8 @@ function hudOverlayKeys(dt)
     const talking = hudDialogBusy();
     const hit = k => typeof keyWasPressed == 'function' && keyWasPressed(k);
 
-    // ---- Q: quit to title --------------------------------------------------
-    if (!talking && hit('KeyQ') && (s == 'world' || s == 'play' || s == 'results'))
+    // ---- Q: hand the screen back to the OG DOM menu -------------------------
+    if (!talking && hit('KeyQ') && (s == 'world' || s == 'play'))
     {
         HUD.quitToTitle();
         return true;
@@ -770,39 +525,26 @@ function hudOverlayKeys(dt)
 
     if (talking) return false;
 
-    // ---- E / R / ESC -------------------------------------------------------
+    // ---- E: inventory drawer / ESC: close it -------------------------------
     if (hit('KeyE')) { HUD.showInventory('KeyE'); return true; }
-    if (hit('KeyR')) { HUD.showPauseMenu('KeyR'); return true; }
     if (hit('Escape'))
     {
-        if (HUD.overlay) HUD.hideOverlays('Escape');   // close
-        else HUD.showPauseMenu('Escape');             // open the menu
-        return true;
+        // ESC with nothing open is the DOM menu's business (its own keydown
+        // handler brings the player back to the main menu)
+        if (HUD.overlay) { HUD.hideOverlays('Escape'); return true; }
     }
 
-    if (!HUD.overlay) return false;
-
-    // ---- navigation --------------------------------------------------------
-    if (HUD.overlay == 'pause')
-    {
-        const n = HUD.PAUSE_ITEMS.length;
-        let d = 0;
-        if (hit('ArrowDown') || hit('KeyS')) d = 1;
-        if (hit('ArrowUp')   || hit('KeyW')) d = -1;
-        if (d) { HUD.overlaySel = (HUD.overlaySel + d + n) % n; return true; }
-        if (hit('Enter') || hit('NumpadEnter') || hit('Space'))
-        { hudPauseAction(HUD.overlaySel); return true; }
-    }
-    return true;
+    // an open drawer swallows the rest of the frame's keys
+    return HUD.overlay !== null;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-// input masking — an open overlay owns the movement keys
+// input masking — an open drawer owns the movement keys
 //
 // LittleJS does not rasterise draw calls immediately (they go into the WebGL
 // batch and are flushed in the render pass), and engineObjectsUpdate() — what
 // runs Player.update() and PlayNote.tick() — happens AFTER gameUpdate(). So
-// while a panel is open we save the movement keys and zero them for the rest
+// while the drawer is open we save the movement keys and zero them for the rest
 // of the frame; the save is undone at the top of the NEXT frame's
 // updateOverlays(). That keeps the mask live across gameUpdate,
 // gameUpdatePost and engineObjectsUpdate, without ever touching the engine's
@@ -842,8 +584,8 @@ function hudMaskMovement()
 /**
  * LittleJS plugin hook. Plugin `update` runs after gameUpdate() but still
  * before engineObjectsUpdate(), so parking the player here means the walk that
- * follows this frame starts from a dead stop. Optional: without it the panels
- * still open and close, they just ease to a halt instead of snapping.
+ * follows this frame starts from a dead stop. Optional: without it the drawer
+ * still opens and closes, it just eases to a halt instead of snapping.
  */
 function hudHookPostUpdate()
 {
@@ -862,169 +604,107 @@ function hudHookPostUpdate()
     catch (e) {}
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// overlay rendering — called at the end of hudWorld()/hudPlay()/hudResults()
-///////////////////////////////////////////////////////////////////////////////
+// drawer rendering — called at the end of hudWorld()/hudPlay()
+/////////////////////////////////////////////////////////////////////////////
 
-/** dim the field, then draw whatever panel is open */
+/** The inventory drawer. Deliberately NOT a full-screen modal: it is a small
+ *  panel tucked into the bottom-left corner, sitting level with the HUD chips,
+ *  with no scrim over the field — every full-screen menu belongs to the OG DOM
+ *  menu now. */
 HUD.renderOverlay = function ()
 {
     if (!HUD.overlay) return false;
-    const S = mainCanvasSize, C = DATA.c;
     const p = clamp(HUD.overlayT / .18);
     const ease = 1 - Math.pow(1 - p, 3);
-
-    drawRect(vec2(S.x/2, S.y/2), S, alpha(C.bg, .74 * ease), 0, true, true);
     if (HUD.overlay == 'inventory') hudDrawInventory(ease);
-    else hudDrawPause(ease);
     return true;
 };
 
-/** the scrim + panel chrome every overlay shares; returns the inner content box */
-function hudOverlayFrame(title, w, h, accent)
+function hudSectionLabel(x, y, text, color, w)
 {
-    const S = mainCanvasSize, C = DATA.c;
-    const p = clamp(HUD.overlayT / .18);
-    const ease = 1 - Math.pow(1 - p, 3);
-    const x = (S.x - w)/2, y = (S.y - h)/2;
-
-    drawRect(vec2(S.x/2, y + h + 16), vec2(w*.9, 3), alpha(accent, .3*ease), 0, true, true);
-    uiPanel(x, y, w, h, alpha(accent, .35 + .35*ease), 22);
-    uiSpaced(title, S.x/2, y + 46, clamp(S.x*.032, 17, 28), C.ink, 3,
-        { align:'center', font: DATA.ui.font, style:'900',
-          lineWidth: 5, lineColor: alpha(C.bg, .8) });
-    uiZigRule(x + 40, x + w - 40, y + 64, 10, 4, 2, alpha(accent, .5*ease));
-    return { x, y, w, h, ease, inner: x + 34, iw: w - 68 };
+    uiText(text, x, y, 11, alpha(color, .95), { font: DATA.ui.font, style:'900' });
+    uiZigRule(x + 66, x + (w || 92), y + 4, 6, 3, 1.5, alpha(color, .4));
 }
 
-/** "E / ESC — CLOSE" footer, plus any transient flash message */
-function hudOverlayFooter(box, hint)
-{
-    const S = mainCanvasSize, C = DATA.c;
-    const pulse = .5 + .5*sin(HUD.t*3.4);
-    uiText(hint, box.x + box.w/2, box.y + box.h - 24,
-        clamp(S.x*.017, 11, 15), alpha(C.ink, .35 + pulse*.45),
-        { align:'center', font: DATA.ui.font, style:'900' });
-    if (HUD.overlayMsgT > 0)
-    {
-        const a = Math.min(1, HUD.overlayMsgT);
-        uiText(HUD.overlayMsg, box.x + box.w/2, box.y + box.h - 44,
-            clamp(S.x*.017, 11, 15), alpha(C.gold, .5 + .5*Math.sin(HUD.t*8)*a),
-            { align:'center', font: DATA.ui.font, style:'900' });
-    }
-}
-
-function hudSectionLabel(x, y, text, color)
-{
-    uiText(text, x, y, 12, alpha(color, .9), { font: DATA.ui.font, style:'900' });
-    uiZigRule(x, x + 92, y + 10, 6, 3, 1.5, alpha(color, .4));
-}
-
-// ---- inventory -------------------------------------------------------------
+// ---- inventory drawer ------------------------------------------------------
 
 function hudDrawInventory(ease)
 {
     const S = mainCanvasSize, C = DATA.c;
     const ps  = hudSyncPlayerState();
     const inv = hudInventory();
-    const w = Math.min(S.x - 40, 620), h = Math.min(S.y - 24, clamp(S.y*.82, 340, 520));
-    const box = hudOverlayFrame('INVENTORY', w, h, C.cyan);
-    const x = box.inner, iw = box.iw;
+    const weapons = inv.weapons.slice(0, 4);
+    const items   = inv.items.slice(0, 5);
     const frac = ps.maxHp > 0 ? ps.hp / ps.maxHp : 0;
 
-    let y = box.y + 100;
-    const rowH = 26;
+    const w = Math.min(S.x - 32, 340), pad = 18, rowH = 21;
+    const h = 158 + rowH * (weapons.length + items.length);
+    const x = 16 - (1 - ease) * 20, y = S.y - h - 16;      // slides in from the left
+    const right = x + w - pad;
 
-    // ---- stats -------------------------------------------------------------
-    hudSectionLabel(x, y, 'STATS', C.cyan);
-    y += 22;
-    uiText('LV', x, y, 14, alpha(C.dim, .95), { font: DATA.ui.font });
-    uiText(String(ps.level), x + 88, y + 1, 16, C.gold,
-        { align:'right', font: DATA.ui.font, style:'900' });
-    uiText('BEST', x + 120, y, 14, alpha(C.dim, .95), { font: DATA.ui.font });
-    uiText(String(best || 0).padStart(6,'0'), x + iw, y + 1, 16, C.gold,
-        { align:'right', font: DATA.ui.font, style:'900' });
-    y += 24;
-    uiText('HP', x, y, 14, alpha(C.dim, .95), { font: DATA.ui.font });
-    uiBar(x + 40, y - 3, iw - 150, 14, frac, hudHPColor(frac), alpha(C.bg, .75));
-    uiText(Math.ceil(ps.hp) + ' / ' + ps.maxHp, x + iw, y + 1, 15, C.ink,
-        { align:'right', font: DATA.ui.font, style:'900' });
-    y += 30;
+    uiPanel(x, y, w, h, alpha(C.cyan, .4 + .35*ease), 18);
+    drawRect(vec2(x + 2, y + h*.5), vec2(3, h - 24), alpha(C.cyan, .8), 0, true, true);
 
-    // ---- weapons -----------------------------------------------------------
-    hudSectionLabel(x, y, 'WEAPONS', C.neon);
-    y += 22;
-    for (const wp of inv.weapons)
+    // ---- header -------------------------------------------------------------
+    uiSpaced('INVENTORY', x + pad, y + 26, 15, C.ink, 3,
+        { font: DATA.ui.font, style:'900', lineWidth: 3, lineColor: alpha(C.bg, .8) });
+    uiText('[E]', right, y + 25, 11, alpha(C.cyan, .8),
+        { align:'right', font: DATA.ui.font, style:'900' });
+    uiZigRule(x + pad, right, y + 38, 10, 3, 1.5, alpha(C.cyan, .45));
+
+    // ---- stats --------------------------------------------------------------
+    let cy = y + 50;
+    uiText('LV', x + pad, cy, 12, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiText(String(ps.level), x + pad + 32, cy + 1, 14, C.gold,
+        { font: DATA.ui.font, style:'900' });
+    uiText('BEST', x + pad + 92, cy, 12, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiText(String(best || 0).padStart(6, '0'), right, cy + 1, 14, C.gold,
+        { align:'right', font: DATA.ui.font, style:'900' });
+    cy += 20;
+    uiText('HP', x + pad, cy, 12, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiBar(x + pad + 32, cy - 3, w - pad*2 - 100, 11, frac, hudHPColor(frac), alpha(C.bg, .75));
+    uiText(Math.ceil(ps.hp) + '/' + ps.maxHp, right, cy, 12, frac > .22 ? C.ink : C.bad,
+        { align:'right', font: DATA.ui.font, style:'900' });
+    cy += 24;
+
+    // ---- weapons ------------------------------------------------------------
+    hudSectionLabel(x + pad, cy, 'WEAPONS', C.neon);
+    cy += 16;
+    if (!weapons.length)
+        uiText('—', x + pad, cy, 13, alpha(C.dim, .8), { font: DATA.ui.soft });
+    for (const wp of weapons)
     {
         const atk = wp.atk === undefined ? wp.power : wp.atk;
-        drawRect(vec2(x + iw/2, y + 9), vec2(iw, rowH - 3), alpha(C.neon, .09), 0, true, true);
-        uiText(String(wp.name).toUpperCase(), x + 12, y + 9, 15, C.ink,
+        uiText(String(wp.name).toUpperCase(), x + pad, cy, 13, C.ink,
             { font: DATA.ui.font, style:'900' });
-        uiText('ATK ' + atk, x + iw - 12, y + 9, 15, C.neonSoft,
+        uiText('ATK ' + atk, right, cy, 13, C.neonSoft,
             { align:'right', font: DATA.ui.font, style:'900' });
-        y += rowH;
-        if (wp.desc)
-        {
-            uiText(wp.desc, x + 12, y - 4, 12, alpha(C.dim, .85), { font: DATA.ui.soft });
-            y += 18;
-        }
+        cy += rowH;
     }
-    y += 10;
+    cy += 8;
 
-    // ---- items -------------------------------------------------------------
-    hudSectionLabel(x, y, 'ITEMS', C.gold);
-    y += 22;
-    for (const it of inv.items)
+    // ---- items --------------------------------------------------------------
+    hudSectionLabel(x + pad, cy, 'ITEMS', C.gold);
+    cy += 16;
+    if (!items.length)
+        uiText('—', x + pad, cy, 13, alpha(C.dim, .8), { font: DATA.ui.soft });
+    for (const it of items)
     {
         const qty = it.qty === undefined ? 1 : it.qty;
-        drawRect(vec2(x + iw/2, y + 9), vec2(iw, rowH - 3), alpha(C.gold, .09), 0, true, true);
-        uiText(String(it.name).toUpperCase(), x + 12, y + 9, 15, C.ink,
+        uiText(String(it.name).toUpperCase(), x + pad, cy, 13, C.ink,
             { font: DATA.ui.font, style:'900' });
-        uiText('×' + qty, x + iw - 12, y + 9, 15, C.gold,
+        uiText('\u00d7' + qty, right, cy, 13, C.gold,
             { align:'right', font: DATA.ui.font, style:'900' });
-        y += rowH;
-        if (it.desc)
-        {
-            uiText(it.desc, x + 12, y - 4, 12, alpha(C.dim, .85), { font: DATA.ui.soft });
-            y += 18;
-        }
+        cy += rowH;
     }
 
-    hudOverlayFooter(box, 'E  or  ESC  —  CLOSE');
-}
-
-// ---- pause menu ------------------------------------------------------------
-
-function hudDrawPause(ease)
-{
-    const S = mainCanvasSize, C = DATA.c;
-    const items = HUD.PAUSE_ITEMS;
-    const w = Math.min(S.x - 40, 460), h = Math.min(S.y - 24, 96 + items.length*46);
-    const box = hudOverlayFrame('MENU', w, h, C.neon);
-    const x = box.inner, iw = box.iw, rowH = 42;
-    let y = box.y + 92;
-
-    for (let i = 0; i < items.length; ++i)
-    {
-        const sel = i == HUD.overlaySel;
-        const yy = y + i*rowH;
-        if (sel)
-        {
-            drawRect(vec2(x + iw/2, yy + 16), vec2(iw, rowH - 6), alpha(C.neon, .17), 0, true, true);
-            drawRect(vec2(x, yy + 16), vec2(3, rowH - 6), C.neon, 0, true, true);
-        }
-        uiZig([vec2(x + 14, yy + 22), vec2(x + 22, yy + 10), vec2(x + 30, yy + 22)], 2.5,
-            alpha(C.neon, sel ? .95 : .25));
-        uiText(items[i], x + 46, yy + 18, 19, sel ? C.ink : alpha(C.dim, .95),
-            { font: DATA.ui.font, style: sel ? '900' : 'bold' });
-        if (sel)
-            uiText('ENTER', x + iw - 12, yy + 18, 13, C.neon,
-                { align:'right', font: DATA.ui.font, style:'900' });
-    }
-
-    y += items.length*rowH + 4;
-    uiText('↑ ↓  MOVE     ·     ENTER  SELECT     ·     Q  QUIT', x + iw/2, y,
-        12, alpha(C.dim, .75), { align:'center', font: DATA.ui.soft });
-
-    hudOverlayFooter(box, 'R  or  ESC  —  RESUME');
+    // ---- footer -------------------------------------------------------------
+    const pulse = .5 + .5*sin(HUD.t*3.4);
+    uiText('E  or  ESC  \u2014  CLOSE', x + w/2, y + h - 14,
+        11, alpha(C.ink, .3 + pulse*.4),
+        { align:'center', font: DATA.ui.font, style:'900' });
+    if (HUD.overlayMsgT > 0)
+        uiText(HUD.overlayMsg, x + w/2, y + h - 30,
+            11, alpha(C.gold, .5 + .5*Math.sin(HUD.t*8)*Math.min(1, HUD.overlayMsgT)),
+            { align:'center', font: DATA.ui.font, style:'900' });
 }

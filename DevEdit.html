@@ -51,6 +51,12 @@
   .w-props select { max-width:170px; }
   .w-page { display:flex; gap:5px; align-items:center; margin:4px 0; }
   .w-page textarea { flex:1; background:#0a0a10; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; resize:vertical; min-height:34px; }
+  .w-opt { border:1px dashed var(--line); border-radius:6px; padding:5px 6px; margin:6px 0; }
+  .w-opt-head { display:flex; align-items:center; gap:5px; margin-bottom:3px; }
+  .w-opt-head .w-tag { color:var(--accent); font-size:11px; font-weight:700; letter-spacing:1px; }
+  .w-opt label { display:flex; gap:5px; align-items:center; margin:3px 0; color:var(--dim); font-size:12px; }
+  .w-opt input[type=text] { flex:1; width:auto; min-width:0; }
+  .w-opt select { flex:1; max-width:none; }
   #w-roomlist, #w-dialoglist { display:flex; flex-direction:column; gap:4px; max-height:230px; overflow:auto; }
   .w-item { text-align:left; background:#0a0a10; border:1px solid var(--line); border-radius:6px; padding:6px 8px; color:var(--text); cursor:pointer; font:inherit; font-size:13px; }
   .w-item:hover { border-color:var(--accent); }
@@ -181,6 +187,12 @@
           <button id="w-addpage">+ Page</button>
           <button id="w-delpage">− Page</button>
         </div>
+        <div class="w-sec" title="Shown after the last page instead of closing">Branching options</div>
+        <div id="w-options" class="w-props"></div>
+        <div class="w-btns">
+          <button id="w-addopt">+ Option</button>
+          <button id="w-delopt">− Option</button>
+        </div>
       </div>
       <div class="w-sec">File</div>
       <div class="w-btns">
@@ -198,6 +210,8 @@
     WORLD tab — one JSON world (<code>muzic-switch-world</code> v0): rooms with grid terrain
     (<kbd>#</kbd> wall · <kbd>.</kbd> floor · <kbd>-</kbd> path), doors linking rooms, NPCs (sprite <code>NPC_1</code>…<code>NPC_15</code>),
     enemies (their id can lock a door via <b>lockedBy</b>), trigger rects and paged dialogs.
+    Dialogs may also carry <b>branching options</b>: after the last page the player picks one
+    and the box either closes or jumps into another dialog.
     Paint by dragging with a terrain tool; click with an entity tool to place; Select then <kbd>Delete</kbd> removes.
     Save/Load = this browser only; Export GAME.BIN is the single file the game loads.
   </div>
@@ -1127,7 +1141,10 @@
       const b = document.createElement('button');
       b.className = 'w-item' + (k === dialogKey ? ' sel' : '');
       const strong = document.createElement('div'); strong.textContent = d.name || k;
-      const small = document.createElement('small'); small.textContent = k + ' · ' + (d.pages ? d.pages.length : 0) + ' page(s)';
+      const nOpt = (d.options || []).length;
+      const small = document.createElement('small');
+      small.textContent = k + ' · ' + (d.pages ? d.pages.length : 0) + ' page(s)' +
+        (nOpt ? ' · ' + nOpt + ' choice(s)' : '');
       b.append(strong, small);
       b.addEventListener('click', () => { dialogKey = k; refreshDialogs(); });
       list.appendChild(b);
@@ -1157,7 +1174,71 @@
       const s = document.createElement('span'); s.className = 'w-lbl'; s.textContent = 'No dialog selected.';
       pages.appendChild(s);
     }
+    renderOptions(d);
     ['w-dkey', 'w-dname', 'w-addpage', 'w-delpage', 'w-deldialog'].forEach(id => { $(id).disabled = !d; });
+  }
+
+  /* ---------- branching options (dialogs.<id>.options) ----------
+     OPTIONAL: a dialog without `options` stays a plain linear conversation.
+     Each entry is { text, goto } — goto is another dialog id, or null/"" to
+     close the box when that choice is picked. */
+  const MAX_OPTIONS = (typeof WF != 'undefined' && WF.MAX_OPTIONS) || 6;
+
+  function renderOptions(d) {
+    const box = $('w-options'); box.textContent = '';
+    const full = !d || (d.options || []).length >= MAX_OPTIONS;
+    if (!d) {
+      $('w-addopt').disabled = true; $('w-delopt').disabled = true;
+      const s = document.createElement('span'); s.className = 'w-lbl';
+      s.textContent = 'No dialog selected.'; box.appendChild(s); return;
+    }
+    (d.options || []).forEach((o, i) => {
+      const row = document.createElement('div'); row.className = 'w-opt';
+
+      const head = document.createElement('div'); head.className = 'w-opt-head';
+      const tag = document.createElement('span'); tag.className = 'w-tag'; tag.textContent = (i + 1) + '.';
+      const oo = d.options;
+      const mkMini = (label, title, disabled, fn) => {
+        const b = document.createElement('button'); b.className = 'mini'; b.textContent = label; b.title = title;
+        b.disabled = disabled; b.addEventListener('click', fn); return b;
+      };
+      const swap = (a, b2) => { const t = oo[a]; oo[a] = oo[b2]; oo[b2] = t; refreshDialogEditor(); };
+      head.appendChild(tag);
+      head.appendChild(mkMini('↑', 'Move option up', i === 0, () => swap(i - 1, i)));
+      head.appendChild(mkMini('↓', 'Move option down', i === oo.length - 1, () => swap(i, i + 1)));
+      head.appendChild(mkMini('×', 'Remove option', false, () => { oo.splice(i, 1); refreshDialogEditor(); }));
+      row.appendChild(head);
+
+      const tl = document.createElement('label'); tl.textContent = 'Text ';
+      const ti = document.createElement('input'); ti.type = 'text';
+      ti.value = o.text || ''; ti.placeholder = 'What the player can answer…';
+      ti.addEventListener('input', () => { o.text = ti.value; });
+      tl.appendChild(ti); row.appendChild(tl);
+
+      const gl = document.createElement('label'); gl.textContent = 'Then ';
+      const gs = document.createElement('select');
+      const targets = [{ v: '', t: '(closes dialog)' }].concat(dialogKeys().map(k => ({
+        v: k, t: k + ' ("' + (world.dialogs[k].name || '?') + '")' })));
+      targets.forEach(op => {
+        const el = document.createElement('option'); el.value = op.v; el.textContent = op.t;
+        if ((o.goto || '') === op.v) el.selected = true;
+        gs.appendChild(el);
+      });
+      const orphan = o.goto && dialogKeys().indexOf(o.goto) < 0;
+      if (orphan) {   // keep a dangling target visible so it can be repaired
+        const el = document.createElement('option');
+        el.value = o.goto; el.textContent = '⚠ missing "' + o.goto + '"'; el.selected = true;
+        gs.appendChild(el);
+      }
+      gs.addEventListener('change', () => {
+        if (gs.value) o.goto = gs.value; else delete o.goto;   // absent === closes
+        refreshDialogEditor();
+      });
+      gl.appendChild(gs); row.appendChild(gl);
+      box.appendChild(row);
+    });
+    $('w-addopt').disabled = full;
+    $('w-delopt').disabled = !d || !(d.options || []).length;
   }
 
   $('w-adddialog').addEventListener('click', () => {
@@ -1171,16 +1252,19 @@
     if (!dialogKey) return;
     const doomed = dialogKey;
     // count references first, mutate only after the user confirms
-    let refs = 0;
+    let refs = 0, deadOpts = 0;
+    dialogKeys().forEach(k => (world.dialogs[k].options || []).forEach(o => { if (o.goto === doomed) deadOpts++; }));
     roomKeys().forEach(k => {
       refs += world.rooms[k].npcs.filter(n => n.dialog === doomed).length;
       refs += world.rooms[k].triggers.filter(t => t.dialog === doomed).length;
     });
-    if (!confirm('Delete dialog "' + doomed + '"?' + (refs ? '\n' + refs + ' reference(s) will be cleared/dropped.' : ''))) return;
+    if (!confirm('Delete dialog "' + doomed + '"?' + (refs ? '\n' + refs + ' reference(s) will be cleared/dropped.' : '') +
+        (deadOpts ? '\n' + deadOpts + ' option(s) pointed at it and will close instead.' : ''))) return;
     roomKeys().forEach(k => {
       world.rooms[k].npcs.forEach(n => { if (n.dialog === doomed) delete n.dialog; });
       world.rooms[k].triggers = world.rooms[k].triggers.filter(t => t.dialog !== doomed);
     });
+    dialogKeys().forEach(k => (world.dialogs[k].options || []).forEach(o => { if (o.goto === doomed) delete o.goto; }));
     delete world.dialogs[doomed];
     dialogKey = dialogKeys()[0] || null;
     refreshDialogs(); refreshEntity();
@@ -1198,6 +1282,8 @@
       world.rooms[k].npcs.forEach(n => { if (n.dialog === dialogKey) n.dialog = nu; });
       world.rooms[k].triggers.forEach(t => { if (t.dialog === dialogKey) t.dialog = nu; });
     });
+    // branch targets follow the rename too, or they would dangle and fail validation
+    dialogKeys().forEach(k => (world.dialogs[k].options || []).forEach(o => { if (o.goto === dialogKey) o.goto = nu; }));
     dialogKey = nu;
     refreshDialogs(); refreshEntity();
     toast('Renamed dialog → "' + nu + '"');
@@ -1213,6 +1299,21 @@
   $('w-delpage').addEventListener('click', () => {
     const d = dialogKey ? world.dialogs[dialogKey] : null;
     if (d && d.pages.length > 1) { d.pages.pop(); refreshDialogEditor(); }
+  });
+  $('w-addopt').addEventListener('click', () => {
+    const d = dialogKey ? world.dialogs[dialogKey] : null;
+    if (!d) return;
+    if (!Array.isArray(d.options)) d.options = [];
+    if (d.options.length >= MAX_OPTIONS) { toast('A dialog can have at most ' + MAX_OPTIONS + ' options.'); return; }
+    d.options.push({ text: 'New choice…', goto: null });
+    refreshDialogEditor();
+  });
+  $('w-delopt').addEventListener('click', () => {
+    const d = dialogKey ? world.dialogs[dialogKey] : null;
+    if (!d || !(d.options || []).length) return;
+    d.options.pop();
+    if (!d.options.length) delete d.options;     // no options = plain linear dialog
+    refreshDialogEditor();
   });
 
   /* ---------- file: Save / Load / Export GAME.BIN / Import / New ---------- */

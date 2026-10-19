@@ -1,8 +1,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 // ZIGZAG SYNTH — littlejs-game.js
-// Engine init, the title → world → play → results state machine, and the
-// rhythm gameplay (LittleJS port — the old DOM rhythm core lives on as stubs
-// in js/gameplay.js / js/input.js).
+// Engine init, the idle → world → play state machine, and the rhythm gameplay
+// (LittleJS port — the old DOM rhythm core lives on as stubs in
+// js/gameplay.js / js/input.js).
+//
+// THE OG DOM MENU IS THE ONLY MENU. index.html + js/menu.js own every screen
+// (main menu, song select, settings, pause). The canvas has NO title screen and
+// NO results screen: it boots invisible ('idle'), draws only the overworld and
+// the rhythm field, and hands the screen back to the DOM menu on the way out.
+// See "OG DOM menu <-> engine handoff" near the bottom of this file.
 //
 // PLAY INPUT MODEL (locked):
 //   LEFT / RIGHT  press+hold to start & sustain HOLD notes; tap to hit TAPs
@@ -11,7 +17,9 @@
 //                 TOP (orange, right); CENTER notes can be hit from either
 ///////////////////////////////////////////////////////////////////////////////
 
-let state = 'title';
+// 'idle'  invisible — the DOM menu owns the screen (boot + hand-off states)
+// 'world' the overworld hub        'play' the rhythm field
+let state = 'idle';
 let chart = null, notes = [];
 let songTime = 0, songStart = 0;
 let score = 0, combo = 0, maxCombo = 0, best = 0, hits = 0;
@@ -26,12 +34,13 @@ let activeLane = 'bottom';              // 'bottom' (blue, lower band) | 'top' (
 let laneFlash = { top: 0, bottom: 0, center: 0 };   // per-band hit glow
 let laneSwapPulse = 0;                  // little kick when DOWN swaps lanes
 let songMeta = { title: '', artist: '' };
-let playResult = null;                  // last-run summary for the results screen
+let playResult = null;                  // last-run summary, published as ZZ.lastResult
 let audioArmed = false, audioStarted = false, audioFailed = false;
 
 // ---- battle mode (see js/battle.js) ----------------------------------------
 // Entered only via window.ZZ.startBattle(enemyId, def) (called by overworld.js
-// at an arena gate). While battleMode is true the play state alternates
+// at an arena gate) — so the DOM menu needs window.ZZ.LaneMenuWorld() to reach
+// the hub. While battleMode is true the play state alternates
 // between frozen command-menu phases (Battle drives itself) and rhythm
 // "sections" that slice the song into segments.
 //
@@ -45,9 +54,10 @@ let audioArmed = false, audioStarted = false, audioFailed = false;
 // audio stays paused. Judgments feed the normal score/combo; the burst's
 // accuracy is handed to Battle.resolveSpec(). The real section is untouched.
 //
-// LOSS: onBattleEnd(lost) -> results screen with the run's rhythm stats
-// (hudResults shows STAGE MISS); the player's HP is restored for the next
-// fight. WIN: ZZ.onEnemyDefeated(enemyId) unlocks the gate, then results.
+// LOSS: onBattleEnd(lost) -> ZZ.lastResult + hand-off to the DOM menu (the
+// canvas draws no results screen); the player's HP is restored for the next
+// fight. WIN: ZZ.onEnemyDefeated(enemyId) unlocks the gate, then the same
+// hand-off.
 let battleMode = false;
 let battleEnemyId = null, battleEnemyConfig = null;
 let battlePlayer = null;                    // persistent across fights this session
@@ -74,8 +84,8 @@ const WARDENS = {
 // tunables for the stage (kept here so data.js stays untouched)
 const PLAY = {
     fallTime: 1.6,          // seconds a note takes from spawn to its hit line
-    fallSpan: 6.5,          // world units a note drops from spawn down to its band line
-    bandHeight: 2.2,        // height of one lane band (the bands stack, they don't sit side by side)
+    barY: 2.5,              // world units from center to bar (replaces fallSpan)
+    bandHeight: 0.2,        // height of the bar strip (thin horizontal strip at +/-barY)
     bandWidth: 11.5,        // width of the play field the bands span
     hitWindow: .15,         // outer judgment window; finer grades from DATA.judgments
     countdown: 2.2,         // lead-in seconds before songTime hits 0
@@ -90,7 +100,7 @@ const PLAY = {
 // the two lanes are stacked VERTICALLY: TOP rides the upper band of the play
 // field, BOTTOM the lower band, and CENTER sits between them. DATA.laneY is
 // [bottom, top]; a missing entry falls back to these defaults.
-const LANE_Y = DATA.laneY || [-2.5, 2.5];
+const LANE_Y = DATA.laneY || [-PLAY.barY, PLAY.barY];
 const laneY = lane => lane == 'top' ? LANE_Y[1]
                     : lane == 'bottom' ? LANE_Y[0] : 0;
 
@@ -103,11 +113,18 @@ function playLaneColor(lane)
     return col(PLAY.colors.center);
 }
 
-// world y of a note in `lane` whose chart time is t: it falls from above its
-// band, down through the band, and crosses that band's horizontal hit line
-// at laneY(lane) exactly on the beat
-const noteY = (t, lane) => laneY(lane) + PLAY.fallSpan *
-    clamp((t - songTime) / PLAY.fallTime, -0.3, 1);
+// world y of a note in `lane` whose chart time is t: it starts at center (y=0) and moves
+// toward the bar at +/-BAR_Y over fallTime seconds, reaching the bar exactly on the beat.
+const noteY = (t, lane) => {
+    const progress = clamp((songTime - (t - PLAY.fallTime)) / PLAY.fallTime, 0, 1);
+    if (lane === 'top') {
+        return PLAY.barY * progress;
+    } else if (lane === 'bottom') {
+        return -PLAY.barY * progress;
+    } else {
+        return 0;
+    }
+};
 
 const r3 = x => Math.round(x * 1000) / 1000;
 
@@ -140,8 +157,9 @@ function transitionTo(next)
     player = null;
     camDive = null;
 
-    if (next == 'title')
+    if (next == 'idle')
     {
+        // nothing is drawn in this state — body.zz-lane keeps #app on top
         cameraPos = vec2();
         cameraScale = DATA.playCamScale;
     }
@@ -161,14 +179,6 @@ function transitionTo(next)
         startSong();
         camDive = { t:0, dur:.45, fromPos: cameraPos.copy(), fromScale: cameraScale,
             toPos: vec2(), toScale: DATA.playCamScale };
-    }
-    else if (next == 'results')
-    {
-        // keep the hub glowing behind the panel, and glide back to the player
-        const fromPos = cameraPos.copy(), fromScale = cameraScale;
-        initWorld();
-        camDive = { t:0, dur:.55, fromPos, fromScale,
-            toPos: player.pos.copy(), toScale: DATA.world.camScale };
     }
 }
 
@@ -200,7 +210,9 @@ function gameInit()
     const save = readSaveData(SAVE_KEY, {}) || {};
     best = save.best || 0;
 
-    transitionTo('title');
+    // boot invisible: the OG DOM menu owns the screen until it calls
+    // ZZ.LaneMenuPlay() / ZZ.LaneMenuWorld()
+    transitionTo('idle');
 }
 
 function gameUpdate()
@@ -218,17 +230,7 @@ function gameUpdate()
         setSoundVolume(muted ? 0 : DATA.volume);
     }
 
-    if (state == 'title')
-    {
-        if (keyWasPressed('Space') || keyWasPressed('Enter') || keyWasPressed('NumpadEnter') ||
-            mouseWasPressed(0))
-        {
-            audioUnlock();
-            flash = .8; flashColor = DATA.c.neon;
-            setState('world');
-        }
-    }
-    else if (state == 'world')
+    if (state == 'world')
     {
         // World state delegates ALL input/logic/rendering to overworld.js
         // owUpdate(dt): called each frame, handles its own input
@@ -242,15 +244,7 @@ function gameUpdate()
     {
         playUpdate();
     }
-    else if (state == 'results')
-    {
-        if (keyWasPressed('Space') || keyWasPressed('Enter') || keyWasPressed('NumpadEnter') ||
-            mouseWasPressed(0))
-        {
-            flash = .6; flashColor = DATA.c.cyan;
-            setState('world');
-        }
-    }
+    // 'idle' renders nothing: the DOM menu has the screen
 
     updateCamera();
 }
@@ -291,8 +285,9 @@ function gameRender()
 
 function gameRenderPost()
 {
-    if      (state == 'title')   hudTitle();
-    else if (state == 'world')   hudWorld();
+    // 'idle' draws NOTHING — no title screen, no results screen. Both live in
+    // the OG DOM menu (index.html + js/menu.js).
+    if      (state == 'world')   hudWorld();
     else if (state == 'play')
     {
         hudPlay();
@@ -301,7 +296,6 @@ function gameRenderPost()
         if (battleMode && typeof Battle != 'undefined' && Battle.isActive())
             Battle.render();
     }
-    else if (state == 'results') hudResults();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -649,7 +643,10 @@ function endSong()
         best = score;
         writeSaveData(SAVE_KEY, { best, lastRun: playResult });
     }
-    setState('results');
+
+    // no canvas results screen: publish the summary and give the screen back
+    publishResult(playResult);
+    zzLaneRelease('songs');
 }
 
 // weighted accuracy of the run so far, 0..1 (perfect=1, great=.75, good=.4)
@@ -667,7 +664,8 @@ function runAccuracy()
 //   (menu over the countdown) -> command -> enemy turn -> SECTION_PLAY
 //   (rhythm segment, clock runs) -> section end -> openMenu -> repeat
 //   SPECATTACK -> detached spec burst -> resolveSpec -> command phases
-//   onBattleEnd: win -> ZZ.onEnemyDefeated + results; loss -> results
+//   onBattleEnd: win -> ZZ.onEnemyDefeated, then ZZ.lastResult + a hand-off
+//   to the DOM menu; loss -> the same hand-off (no canvas results screen)
 ///////////////////////////////////////////////////////////////////////////////
 
 // called by overworld.js at an arena gate: (enemyId, doorDef) where doorDef
@@ -698,9 +696,76 @@ window.ZZ.startBattle = function (enemyId, def)
     return true;
 };
 
-// OG DOM menu <-> engine handoff: menu.js calls these when the player picks
-// Play (or navigates back out), toggling body.zz-lane so the DOM screens step
-// aside for the LittleJS canvas.
+///////////////////////////////////////////////////////////////////////////////
+// OG DOM menu <-> engine handoff
+//
+// The DOM menu (index.html + js/menu.js) is the ONLY menu. It hides #app with
+// body.zz-lane while the engine owns the screen and drops the class when it
+// navigates away. The engine's half of the contract:
+//
+//   ZZ.LaneMenuPlay()  — "Play" on a DOM screen  -> straight into the rhythm
+//   ZZ.LaneMenuWorld() — "Explore" (optional)    -> into the overworld hub
+//   ZZ.LaneMenuExit()  — menu.js navigated back  -> park in the idle state
+//   zzLaneRelease()    — engine-initiated hand-back (song over, fight over, Q)
+//
+// There is no engine title screen to fall back to: idle draws nothing.
+///////////////////////////////////////////////////////////////////////////////
+
+/** Publish a finished run where a DOM results screen can read it. The OG menu
+ *  has no lane-aware results screen yet, so `window.ZZ.lastResult` is the
+ *  contract a follow-up fills #ov-results from:
+ *  { title, artist, score, accuracy, grade, maxCombo, counts[4], songId, bpm,
+ *    difficulty, seed, battle, won, isBest } */
+function publishResult(result)
+{
+    const sg = (typeof chart != 'undefined' && chart && chart.song) || null;
+    const Z = typeof ZZ != 'undefined' && ZZ || {};
+    const ZW = (typeof window != 'undefined' && window.ZZ) || Z;
+
+    result.songId     = sg ? sg.id : null;
+    result.bpm        = sg ? sg.bpm : (chart ? chart.bpm : 0);
+    result.difficulty = (typeof ZZ != 'undefined' && ZZ.Settings && ZZ.Settings.get)
+        ? ZZ.Settings.get('difficulty') : '';
+    result.seed       = (typeof ZZ != 'undefined' && ZZ.Settings && ZZ.Settings.get)
+        ? ZZ.Settings.get('seed') : '';
+    result.isBest     = result.score > 0 && result.score >= best;
+
+    if (typeof window != 'undefined') (window.ZZ = ZW);
+    ZW.lastResult = result;
+    return result;
+}
+
+/** Hand the screen back to the DOM menu: drop body.zz-lane (that class is what
+ *  hides #app and reveals the canvas), park the engine in the invisible 'idle'
+ *  state, and optionally route to a DOM screen. Safe from any state, and a
+ *  no-op-ish fallback when js/menu.js is not loaded. */
+function zzLaneRelease(screen)
+{
+    try
+    {
+        if (typeof document != 'undefined' && document.body)
+            document.body.classList.remove('zz-lane');
+    }
+    catch (e) {}
+
+    // drop any HUD drawer so it can't linger over the next lane visit
+    try { if (typeof HUD != 'undefined' && HUD && HUD.hideOverlays) HUD.hideOverlays(); }
+    catch (e) {}
+
+    const M = (typeof ZZ != 'undefined' && ZZ && ZZ.Menu) ? ZZ.Menu : null;
+    if (screen && M && typeof M.go == 'function')
+    {
+        // menu.go() also runs its own laneExit() -> ZZ.LaneMenuExit()
+        try { M.go(screen); } catch (e) {}
+    }
+
+    // last word: whatever the DOM lane did, the engine ends up invisible
+    setState('idle');
+    return true;
+}
+
+// menu.js: "Play" on the DOM song-select screen. Behaviour unchanged (Play ->
+// rhythm directly) — it just no longer routes through a canvas title screen.
 window.ZZ.LaneMenuPlay = function () {
     audioUnlock();
     flash = 1;
@@ -708,11 +773,25 @@ window.ZZ.LaneMenuPlay = function () {
     setState('play');
     return true;
 };
-window.ZZ.LaneMenuExit = function () {
+
+// entry point for the overworld hub, for a DOM "Explore" button to call. Kept
+// here so menu.js only needs one line (see the handoff note above).
+window.ZZ.LaneMenuWorld = function () {
     audioUnlock();
-    flash = .6;
-    flashColor = DATA.c.cyan;
-    setState('title');
+    flash = 1;
+    flashColor = DATA.c.ink;
+    setState('world');
+    return true;
+};
+
+// menu.js navigated back to a DOM screen: stop drawing, do not take them to a
+// canvas menu (there is none).
+window.ZZ.LaneMenuExit = function () {
+    if (typeof ZZ != 'undefined' && ZZ.Audio) ZZ.Audio.stop();
+    try { if (typeof HUD != 'undefined' && HUD && HUD.hideOverlays) HUD.hideOverlays(); }
+    catch (e) {}
+    setState('idle');
+    return true;
 };
 
 // the playerState object Battle mutates in place (hp / items / score written
@@ -939,7 +1018,8 @@ function battleOnEnd(result)
     finishBattleRun(won);
 }
 
-// win or lose, the run's rhythm stats land on the results screen
+// win or lose, the run's rhythm stats are published for the DOM menu, then
+// the screen goes back to it (there is no canvas results screen)
 function finishBattleRun(won)
 {
     const acc = runAccuracy();
@@ -955,7 +1035,8 @@ function finishBattleRun(won)
         best = score;
         writeSaveData(SAVE_KEY, { best, lastRun: playResult });
     }
-    setState('results');
+    publishResult(playResult);
+    zzLaneRelease('menu');
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -966,7 +1047,7 @@ class PlayNote extends EngineObject
 {
     constructor(n)
     {
-        super(vec2(0, laneY(n.lane) + PLAY.fallSpan), vec2(2.2, 2.2), undefined, 0, WHITE, 10);
+        super(vec2(0, 0), vec2(2.2, 2.2), undefined, 0, WHITE, 10);
         this.t = n.t;
         this.lane = n.lane;                 // 'top' | 'bottom' | 'center'
         this.type = n.type;                 // 'tap' | 'hold'
@@ -988,9 +1069,15 @@ class PlayNote extends EngineObject
         this.missFlash = Math.max(0, this.missFlash - timeDelta*3);
         this.flickFlash = Math.max(0, this.flickFlash - timeDelta*5);
 
-        // scroll position — an active hold pins its head to its band's hit line
+        // scroll position — an active hold pins its head to its bar line
         let y = noteY(this.t, this.lane);
-        if (this.state == 'holding') y = Math.max(y, laneY(this.lane));
+        if (this.state == 'holding') {
+            if (this.lane === 'top') {
+                y = Math.min(y, PLAY.barY);
+            } else if (this.lane === 'bottom') {
+                y = Math.max(y, -PLAY.barY);
+            }
+        }
         this.pos.x = 0;
         this.pos.y = y;
 

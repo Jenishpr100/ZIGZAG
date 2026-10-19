@@ -95,6 +95,27 @@ const DATA = {
             gridAlpha: .05,
             starAlpha: 0,          // it is daytime
             flashA:    '#fff6d8',  // world-switch flash
+
+            // ---- pixel tileset slots -----------------------------------------
+            // baked once into a 16px tilesheet by overworld.js; every `t*`
+            // entry is a Color so owTickPalette lerps them with the world
+            tGrass:   '#46c25a', tGrassLo: '#2f9c42', tGrassHi: '#5ad46d',
+            tPetal:   '#ff8fd0', tPollen:  '#ffd76a',
+            tSoil:    '#8a5a33', tSoilLo:  '#5f3c1d',
+            tPath:    '#cbb689', tPathHi:  '#e8dcb6', tPathLo:  '#9d8557',
+            tBrick:   '#a9713f', tBrickLo: '#77491f', tBrickHi: '#c9915c',
+            tRoof:    '#b8443a', tRoofLo: '#7c2a24', tRoofHi: '#d86a5e',
+            tWall:    '#e2caa4', tWallLo: '#b0906a',
+            tGlass:   '#8fd8ff',
+            tWood:    '#b5762f', tWoodLo: '#7a4a1a',
+            tLeaf:    '#2f8f3a', tLeafLo: '#1b5f26', tLeafHi: '#48ad52',
+            tTrunk:   '#7a4f2a',
+            tRock:    '#9aa2ab', tRockLo: '#69707c',
+            tWater:   '#2f7fd0', tWaterHi: '#7cc0f5',
+            tNeon:    '#ffd76a', tNeon2:   '#ff7a3c',
+            tInk:     '#2a1c12',
+            tFloor:   '#c99a5e', tFloorLo: '#a37a44',
+            tCloth:   '#c8506a', tClothLo: '#8f3448',
         },
         zag: {
             bg:        '#0d001a',  // near-black purple
@@ -128,6 +149,25 @@ const DATA = {
             gridAlpha: .22,
             starAlpha: .5,
             flashA:    '#ff3ec8',
+
+            // ---- the same tileset slots, inverted into neon ------------------
+            tGrass:   '#2a0038', tGrassLo: '#1a0026', tGrassHi: '#3c0055',
+            tPetal:   '#ff7ad9', tPollen:  '#fff27a',
+            tSoil:    '#3a2a50', tSoilLo:  '#241a36',
+            tPath:    '#3d2f5c', tPathHi:  '#5b4884', tPathLo:  '#281e40',
+            tBrick:   '#26263c', tBrickLo: '#14142a', tBrickHi: '#3d3d63',
+            tRoof:    '#6a1240', tRoofLo: '#3a0826', tRoofHi: '#9c1f5e',
+            tWall:    '#2c2c4a', tWallLo: '#191930',
+            tGlass:   '#2ff3ff',
+            tWood:    '#ff7a1a', tWoodLo: '#a33f06',
+            tLeaf:    '#7a3cff', tLeafLo: '#4a1ea0', tLeafHi: '#a066ff',
+            tTrunk:   '#2a1c3c',
+            tRock:    '#3a3a5c', tRockLo: '#20203c',
+            tWater:   '#1040a0', tWaterHi: '#40a0ff',
+            tNeon:    '#ff2e88', tNeon2:   '#00ffcc',
+            tInk:     '#05000d',
+            tFloor:   '#2a1c46', tFloorLo: '#1b1230',
+            tCloth:   '#7a1fa0', tClothLo: '#4a0f66',
         },
     },
 
