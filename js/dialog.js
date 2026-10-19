@@ -11,9 +11,20 @@
 //   Dialog.close()           force it shut
 //
 // Everything is drawn with LittleJS draw calls (screen space), never DOM.
-// A tiny EngineObject (DialogLayer) sits at a very high renderOrder so the
-// box lands above the world and its additive particles even if owRender()
-// is called from anywhere in the frame.
+//
+// WHY THE ENGINE-OBJECT LAYER MATTERS (the "dialog never shows" bug):
+// overworld.js calls Dialog.render() from owRender(), which littlejs-game.js
+// invokes inside gameUpdate() — i.e. during the UPDATE phase. LittleJS does
+// not rasterise draw calls immediately (they go into the WebGL batch and are
+// only flushed in gameRenderPass), so a box drawn from the update phase is
+// flushed BEFORE the world tiles and the HUD of that same frame and is simply
+// painted over. The DialogLayer below sits at a very high renderOrder and is
+// invoked from inside the render pass, where the box really lands on top.
+// Dialog.render() therefore refuses to draw unless it was called from that
+// layer (Dialog.inRenderPass) — the owRender() call becomes a no-op instead of
+// a box that vanishes.
+//
+// Set ZZ.dialogTrace = true (or add ?dialog to the URL) for a console trace.
 ///////////////////////////////////////////////////////////////////////////////
 
 const DIALOG_LAYER_ORDER = 1e9 + 50;   // beats ParticleEmitter's 1e9
@@ -32,6 +43,21 @@ const Dialog = {
     lastUpdateFrame: -1,
     lastRenderFrame: -1,
     layer:   null,
+    inRenderPass: false,// true only inside DialogLayer.render()
+};
+
+/** opt-in console tracing: ZZ.dialogTrace = true, or ?dialog in the URL */
+Dialog.trace = function (msg)
+{
+    let on = false;
+    try
+    {
+        if (typeof ZZ != 'undefined' && ZZ && ZZ.dialogTrace) on = true;
+        if (!on && typeof location != 'undefined' && location.search &&
+            /[?&]dialog\b/.test(location.search)) on = true;
+    }
+    catch (e) {}
+    if (on && typeof console != 'undefined') console.log('[Dialog]', msg);
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -65,6 +91,8 @@ function dlgAdvanceHeld()
 Dialog.show = function (name, lines, opts)
 {
     opts = opts || {};
+    Dialog.trace('show "' + name + '" (' +
+        (Array.isArray(lines) ? lines.length : 1) + ' page(s))');
     Dialog.name = String(name || '');
     Dialog.pages = Array.isArray(lines) ? lines.filter(l => typeof l == 'string' && l.length)
                                         : (typeof lines == 'string' && lines ? [lines] : ['…']);
@@ -76,14 +104,14 @@ Dialog.show = function (name, lines, opts)
     Dialog.cell = opts.cell === undefined ? 8 : opts.cell;
     Dialog.wrapCache = null;
     Dialog.open = true;
+    Dialog.lastRenderFrame = -1;   // force a redraw on the very next render pass
 
     // if a key is already down (the Enter that opened this), latch so the
     // same press can never also advance a page
     if (dlgAdvanceHeld()) Dialog.latch = true;
 
     // a high renderOrder object so the box always draws over the world
-    if (!Dialog.layer || Dialog.layer.destroyed)
-        Dialog.layer = new DialogLayer();
+    Dialog.ensureLayer();
     return true;
 };
 
@@ -99,8 +127,24 @@ Dialog.close = function ()
 };
 
 Dialog.isOpen    = function () { return Dialog.open; };
-Dialog.inputLocked = function () { return Dialog.open || Dialog.latch; };
+Dialog.inputLocked = function ()
+{
+    // also true while an E/R HUD panel is up: overworld.js already polls this,
+    // so the overworld freezes (no walking, no door triggers, no world swap)
+    // without overworld.js needing a single edit.
+    return Dialog.open || Dialog.latch ||
+        (typeof HUD != 'undefined' && HUD && typeof HUD.overlayOpen == 'function' &&
+         HUD.overlayOpen());
+};
 Dialog.pageCount = function () { return Dialog.pages.length; };
+
+/** (re)create the render-layer object if a state change destroyed it */
+Dialog.ensureLayer = function ()
+{
+    if (!Dialog.layer || Dialog.layer.destroyed)
+        Dialog.layer = new DialogLayer();
+    return Dialog.layer;
+};
 
 /** the visible page as plain text (already-typed portion when typing) */
 Dialog.text = function ()
@@ -125,6 +169,9 @@ Dialog.update = function (dt)
     // a key held over from open/close keeps control locked until release
     if (Dialog.latch && !dlgAdvanceHeld()) Dialog.latch = false;
     if (!Dialog.open) return;
+
+    // self-heal: a state change (engineObjectsDestroy) can drop the layer
+    if (!Dialog.layer || Dialog.layer.destroyed) Dialog.ensureLayer();
 
     Dialog.t += dt;
 
@@ -204,18 +251,37 @@ function dlgWrap(text, size, font, maxW)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// render — called from DialogLayer (and safe to call again; deduped per frame)
+// render — DialogLayer is the ONLY place allowed to draw
 ///////////////////////////////////////////////////////////////////////////////
 
 Dialog.render = function ()
 {
-    if (!Dialog.open) return;
+    if (!Dialog.open) return false;
+    if (!Dialog.inRenderPass) return false;      // update-phase call: skip it
+    return Dialog.renderOnce();
+};
+
+/** unconditional draw, for a manual gameRenderPost() hook */
+Dialog.renderFromPost = function ()
+{
+    if (!Dialog.open) return false;
+    Dialog.lastRenderFrame = -1;                 // beat the per-frame de-dupe
+    return Dialog.renderOnce();
+};
+
+/** the real draw, at most once per frame */
+Dialog.renderOnce = function ()
+{
     if (typeof timeReal != 'undefined')
     {
-        if (Dialog.lastRenderFrame === timeReal) return;   // only once per frame
+        if (Dialog.lastRenderFrame === timeReal) return false;
         Dialog.lastRenderFrame = timeReal;
     }
+    Dialog.ensureLayer();
+    Dialog.trace('render "' + Dialog.name + '" p' + (Dialog.page + 1) + '/' +
+        Dialog.pages.length);
     Dialog.renderBox();
+    return true;
 };
 
 Dialog.renderBox = function ()
@@ -320,6 +386,9 @@ Dialog.renderBox = function ()
 
 ///////////////////////////////////////////////////////////////////////////////
 // the engine-object layer that guarantees draw order
+//
+// renderOrder 1e9+50 puts this last in the render pass — after every world
+// object and after every additive particle — so the box is always topmost.
 ///////////////////////////////////////////////////////////////////////////////
 
 class DialogLayer extends EngineObject
@@ -328,9 +397,21 @@ class DialogLayer extends EngineObject
     {
         super(vec2(), vec2(1), undefined, 0, WHITE, DIALOG_LAYER_ORDER);
         this.persistent = true;      // survive engineObjectsDestroy between states
+        this.mass = 0;
     }
     render()
     {
-        Dialog.render();
+        // flag the render pass so Dialog.render() can tell it apart from the
+        // gameUpdate()-time call in overworld's owRender()
+        Dialog.inRenderPass = true;
+        try { Dialog.render(); }
+        finally { Dialog.inRenderPass = false; }
     }
+}
+
+// console access for debugging: ZZ.dialog, ZZ.dialogTrace = true
+if (typeof window != 'undefined')
+{
+    window.Dialog = Dialog;
+    if (typeof ZZ != 'undefined' && ZZ) ZZ.dialog = Dialog;
 }

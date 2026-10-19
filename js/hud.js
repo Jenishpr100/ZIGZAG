@@ -11,13 +11,33 @@ const HUD = {
     judgeText: '',
     judgeColor: null,
     scoreShown: 0,
+
+    // ---- overlays (E = inventory, R = pause menu) ---------------------------
+    overlay: null,          // null | 'inventory' | 'pause'
+    overlayT: 0,            // seconds since the panel opened (entrance anim)
+    overlaySel: 0,          // pause-menu selection index
+    overlayMsg: '',         // transient footer message ('settings coming soon')
+    overlayMsgT: 0,
+    overlayLatch: false,    // swallow the key that opened/closed the panel
+    lastUpdateFrame: -1,    // frame de-dup so updateOverlays() is idempotent
+    mask: null,             // movement keys saved+zeroed for this frame
+    maskTick: -1,           // HUD.tick the mask was taken on (staleness check)
+    tick: 0,                // frames seen, for the mask staleness check
+    postHooked: false,      // engine plugin registered (restores the mask)
 };
+
+// expose on window too — littlejs-game.js / overworld.js call HUD.* directly
+if (typeof window != 'undefined') window.HUD = HUD;
 
 function hudInit()
 {
     HUD.t = 0; HUD.comboPop = 0; HUD.judgePop = 0;
     HUD.judgeText = ''; HUD.judgeColor = DATA.c.ink;
     HUD.scoreShown = 0;
+    HUD.overlay = null; HUD.overlayT = 0; HUD.overlaySel = 0;
+    HUD.overlayMsg = ''; HUD.overlayMsgT = 0; HUD.overlayLatch = false;
+    HUD.lastUpdateFrame = -1; HUD.mask = null; HUD.maskTick = -1;
+    hudHookPostUpdate();
 }
 
 // called from the rhythm judge so the HUD can pop
@@ -35,6 +55,11 @@ function hudUpdate()
     HUD.comboPop = Math.max(0, HUD.comboPop - timeDelta*3.2);
     HUD.judgePop  = Math.max(0, HUD.judgePop  - timeDelta*2.4);
     HUD.scoreShown = lerp(HUD.scoreShown, score, .18);
+    // the locked control scheme (Q/E/R) — handled here so it works with no
+    // extra wiring in littlejs-game.js; updateOverlays() is frame-idempotent
+    // so an explicit call there too is harmless.
+    HUD.updateOverlays(timeDelta);
+    if (HUD.overlay) HUD.overlayT += timeDelta;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -54,10 +79,12 @@ function uiText(text, x, y, size, color, o)
 function uiSpaced(text, cx, y, size, color, spacing, o)
 {
     o = o || {};
-    mainContext.letterSpacing = spacing + 'px';
+    // mainContext is absent in headless — degrade to plain centred text
+    const ctx = typeof mainContext != 'undefined' ? mainContext : null;
+    if (ctx) ctx.letterSpacing = spacing + 'px';
     uiText(text, cx, y, size, color,
         Object.assign({ align:'center', font: DATA.ui.font, style:'900' }, o));
-    mainContext.letterSpacing = '0px';
+    if (ctx) ctx.letterSpacing = '0px';
 }
 
 // an angled neon panel — cut corners, dark glass, a bright edge
@@ -260,6 +287,9 @@ function hudWorld()
         { align:'right', font: DATA.ui.font, style:'900',
           lineWidth: 3, lineColor: alpha(C.bg, .8) });
 
+    // ---- player status chip (HP bar + level), under the logo ----------------
+    hudStatusChip();
+
     // ---- world-shift banner -------------------------------------------------
     if (typeof owWorldSwitching == 'function' && owWorldSwitching())
     {
@@ -286,8 +316,8 @@ function hudWorld()
         uiText(roomName.toUpperCase(), S.x/2, 86, 13, alpha(C.dim, .75),
             { align:'center', font: DATA.ui.font });
 
-    // ---- control hints, bottom left (hidden while a dialog is up) -----------
-    if (!talking)
+    // ---- control hints, bottom left (hidden while a dialog or panel is up) --
+    if (!talking && !HUD.overlay)
     {
         const hy = S.y - 112;
         uiText('Move', 24, hy, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
@@ -302,11 +332,13 @@ function hudWorld()
         uiText('ENTER', 176, hy + 72, 14, C.cyan, { font: DATA.ui.font, style:'900' });
         uiText('Talk', 24, hy + 90, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
         uiText('SPACE', 176, hy + 90, 14, C.neonSoft, { font: DATA.ui.font, style:'900' });
+        uiText('Quit to title', 24, hy + 108, 14, alpha(C.dim, .85), { font: DATA.ui.soft });
+        uiText('Q', 176, hy + 108, 14, C.bad, { font: DATA.ui.font, style:'900' });
     }
 
     // ---- the portal prompt --------------------------------------------------
     const portalOn = typeof owPortalActive == 'undefined' ? true : owPortalActive;
-    if (player && !talking && portalOn)
+    if (player && !talking && !HUD.overlay && portalOn)
     {
         const d = player.pos.subtract(portalPos).length();
         if (d < DATA.world.portalPrompt)
@@ -323,6 +355,7 @@ function hudWorld()
     }
 
     uiFlash();
+    HUD.renderOverlay();       // E inventory / R menu — always on top
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -376,7 +409,30 @@ function hudPlay()
         S.x/2, S.y - 22, 13, alpha(C.dim, .6),
         { align:'center', font: DATA.ui.soft });
 
+    // ---- player vitals (HP bar + level), tucked under the score chip ---------
+    hudPlayVitals();
+
     uiFlash();
+    HUD.renderOverlay();       // R pause menu / E inventory — always on top
+}
+
+/** the compact HP/level chip for the rhythm field (world uses hudStatusChip) */
+function hudPlayVitals()
+{
+    const C = DATA.c, ps = hudSyncPlayerState();
+    const frac = ps.maxHp > 0 ? ps.hp / ps.maxHp : 0;
+    const w = Math.min(210, mainCanvasSize.x*.26), h = 48, x = 18;
+    const y = 100;
+
+    uiPanel(x, y, w, h, alpha(C.cyan, .35), 14);
+    uiText('HP', x + 14, y + 18, 11, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiBar(x + 36, y + 9, w - 92, 12, frac, hudHPColor(frac), alpha(C.bg, .75));
+    uiText(Math.ceil(ps.hp) + '/' + ps.maxHp, x + w - 14, y + 19, 12,
+        frac > .22 ? C.ink : C.bad, { align:'right', font: DATA.ui.font, style:'900' });
+    uiText('Lv. ' + ps.level, x + 14, y + 38, 13, C.gold,
+        { font: DATA.ui.font, style:'900' });
+    uiText('Q QUIT', x + w - 14, y + 38, 11, alpha(C.dim, .8),
+        { align:'right', font: DATA.ui.font, style:'900' });
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -438,6 +494,7 @@ function hudResults()
         { align:'center', font: DATA.ui.font, style:'900' });
 
     uiFlash();
+    HUD.renderOverlay();
 }
 
 function uiRow(x, y, w, label, value, color, big, k=1)
@@ -447,4 +504,527 @@ function uiRow(x, y, w, label, value, color, big, k=1)
     uiText(value, x + w, y + (big ? 3 : 2)*k, (big ? 30 : 22)*k, color,
         { align:'right', font: DATA.ui.font, style:'900' });
     drawLine(vec2(x, y + 15*k), vec2(x + w, y + 15*k), 1, alpha(C.cyan, .14), vec2(), 0, true, true);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// PLAYER STATE — the single source of truth the HUD, the inventory and
+// battle.js all agree on (window.playerState is seeded in data.js)
+///////////////////////////////////////////////////////////////////////////////
+
+/** window.playerState, created on demand so hud.js works even if data.js is stale */
+function hudPlayerState()
+{
+    if (typeof window != 'undefined' && !window.playerState)
+        window.playerState = { hp: 100, maxHp: 100, level: 1, exp: 0 };
+    return (typeof window != 'undefined' && window.playerState)
+        || { hp: 100, maxHp: 100, level: 1, exp: 0 };
+}
+
+/** mirror the live battle hp onto playerState (top-level `let` in littlejs-game.js) */
+function hudSyncPlayerState()
+{
+    const ps = hudPlayerState();
+    try
+    {
+        if (typeof battlePlayer != 'undefined' && battlePlayer)
+        {
+            ps.hp = battlePlayer.hp;
+            ps.maxHp = battlePlayer.maxHp || ps.maxHp;
+        }
+    }
+    catch (e) {}          // battlePlayer not evaluated yet (TDZ) — ignore
+    if (!(ps.maxHp > 0)) ps.maxHp = 100;
+    ps.hp = Math.max(0, Math.min(ps.maxHp, ps.hp || 0));
+    if (!ps.level) ps.level = 1;
+    return ps;
+}
+
+/** starter inventory from DATA.playerInventory, normalised for drawing */
+function hudInventory()
+{
+    const inv = (typeof DATA != 'undefined' && DATA.playerInventory) || null;
+    const weapons = inv && inv.weapons && inv.weapons.length ? inv.weapons
+        : [{ name: 'ZIGZAG FISTS', atk: 6 }];
+    const items = inv && inv.items && inv.items.length ? inv.items
+        : [{ name: 'POTION', qty: 1, desc: 'Restores 30 HP.' }];
+    return { weapons, items };
+}
+
+const hudHPColor = (frac)=> frac > .5 ? DATA.c.good : (frac > .22 ? DATA.c.ok : DATA.c.bad);
+
+///////////////////////////////////////////////////////////////////////////////
+// WORLD / PLAY STATUS CHIP  (BUG 7 — HP bar + level in the overworld)
+///////////////////////////////////////////////////////////////////////////////
+
+/** the small status chip under the logo: HP bar, Lv, equipped weapon */
+function hudStatusChip()
+{
+    const C = DATA.c, ps = hudSyncPlayerState();
+    const accent = (typeof owPal != 'undefined' && owPal && owPal.accent) || C.neon;
+    const x = 16, y = 76, w = 208, h = 54;
+    const hpFrac = ps.maxHp > 0 ? ps.hp / ps.maxHp : 0;
+
+    uiPanel(x, y, w, h, alpha(accent, .38), 14);
+    uiText('HP', x + 16, y + 20, 11, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiBar(x + 40, y + 11, w - 92, 13, hpFrac, hudHPColor(hpFrac), alpha(C.bg, .75));
+    uiText(Math.ceil(ps.hp) + '/' + ps.maxHp, x + w - 16, y + 21, 12,
+        hpFrac > .22 ? C.ink : C.bad, { align:'right', font: DATA.ui.font, style:'900' });
+
+    uiText('Lv. ' + ps.level, x + 16, y + 42, 14, C.gold,
+        { font: DATA.ui.font, style:'900' });
+    const wp = hudInventory().weapons[0];
+    if (wp)
+        uiText(wp.name + '  ATK ' + (wp.atk === undefined ? wp.power : wp.atk),
+            x + w - 16, y + 41, 11, alpha(C.ink, .6),
+            { align:'right', font: DATA.ui.soft });
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// OVERLAYS — E inventory, R pause menu, Q quit   (BUGS 5 + 8)
+//
+// Everything is self-contained in hud.js so littlejs-game.js / overworld.js
+// never need to change. The panels draw from hudWorld()/hudPlay()/hudResults()
+// (all already called by gameRenderPost) and the keys are polled from
+// hudUpdate() (already called by gameUpdate). The API below is what the
+// orchestrator may wire explicitly; every call is frame-idempotent.
+///////////////////////////////////////////////////////////////////////////////
+
+function hudDialogBusy()
+{
+    return typeof Dialog != 'undefined' && Dialog && (Dialog.isOpen() || Dialog.latch);
+}
+
+function hudState()
+{
+    return typeof state != 'undefined' ? state : '';
+}
+
+/** is any HUD overlay on screen right now? */
+HUD.overlayOpen = function () { return HUD.overlay !== null; };
+
+/** E — toggle the inventory panel */
+HUD.showInventory = function (byKey)
+{
+    if (!hudOverlaysAllowed()) return false;
+    if (HUD.overlay == 'inventory') { HUD.hideOverlays(byKey); return false; }
+    HUD.overlay = 'inventory'; HUD.overlaySel = 0; HUD.overlayT = 0;
+    HUD.overlayLatch = byKey || 'KeyE';
+    return true;
+};
+
+/** R — toggle the pause menu */
+HUD.showPauseMenu = function (byKey)
+{
+    if (!hudOverlaysAllowed()) return false;
+    if (HUD.overlay == 'pause') { HUD.hideOverlays(byKey); return false; }
+    HUD.overlay = 'pause'; HUD.overlaySel = 0; HUD.overlayT = 0;
+    HUD.overlayLatch = byKey || 'KeyR';
+    return true;
+};
+
+/** overlays only exist where the locked scheme allows them: no dialog up,
+ *  not on the title screen, and not on results (where SPACE already means
+ *  "return to the hub", so a menu would fight it) */
+function hudOverlaysAllowed()
+{
+    if (hudDialogBusy()) return false;
+    const s = hudState();
+    return s == 'world' || s == 'play';
+}
+
+/** close whatever overlay is open. `byKey` latches the closing key so the
+ *  very same physical press can never immediately reopen the panel. */
+HUD.hideOverlays = function (byKey)
+{
+    if (!HUD.overlay) return false;
+    HUD.overlay = null; HUD.overlayT = 0; HUD.overlaySel = 0;
+    HUD.overlayLatch = byKey || false;
+    return true;
+};
+
+/** Q — back to the title screen (world + play only) */
+HUD.quitToTitle = function ()
+{
+    const s = hudState();
+    if (s != 'world' && s != 'play' && s != 'results') return false;
+    HUD.hideOverlays();
+    if (typeof setState == 'function') setState('title');
+    return true;
+};
+
+// the pause menu's row actions
+HUD.PAUSE_ITEMS = ['RESUME', 'RESTART STAGE', 'SETTINGS', 'QUIT TO TITLE'];
+
+function hudPauseAction(i)
+{
+    const s = hudState();
+    switch (i)
+    {
+        case 0: HUD.hideOverlays(); break;
+        case 1:                                     // restart the stage / hub
+            HUD.hideOverlays();
+            hudResetPlayer();
+            if (typeof setState == 'function') setState('world');
+            break;
+        case 2:
+            if (hudOpenSettingsScreen()) HUD.hideOverlays();
+            else HUD.flash('SETTINGS — COMING SOON');
+            break;
+        case 3:
+            HUD.quitToTitle(); break;
+    }
+}
+
+/** full heal + level-1 reset of the shared player state */
+function hudResetPlayer()
+{
+    const ps = hudPlayerState();
+    ps.hp = ps.maxHp; ps.exp = 0;
+    try { if (typeof battlePlayer != 'undefined' && battlePlayer) battlePlayer.hp = battlePlayer.maxHp; }
+    catch (e) {}
+}
+
+/** hand off to the DOM settings screen if the menu lane exposes one */
+function hudOpenSettingsScreen()
+{
+    try
+    {
+        if (typeof ZZ != 'undefined' && ZZ)
+        {
+            for (const k of ['openSettings', 'showSettings', 'settings'])
+                if (typeof ZZ[k] == 'function') { ZZ[k](); return true; }
+        }
+        if (typeof openSettingsScreen == 'function') { openSettingsScreen(); return true; }
+        const el = typeof document != 'undefined' &&
+            (document.getElementById('settings') || document.getElementById('settings-screen'));
+        if (el)
+        {
+            if (el.showModal) el.showModal(); else el.hidden = false;
+            return true;
+        }
+    }
+    catch (e) {}
+    return false;
+}
+
+HUD.flash = function (msg, secs)
+{
+    HUD.overlayMsg = String(msg || '');
+    HUD.overlayMsgT = secs === undefined ? 2.2 : secs;
+};
+
+/**
+ * Per-frame overlay input. Q quit / E inventory / R menu / Esc close-or-menu,
+ * plus arrow-key nav + Enter confirm inside the pause menu.
+ * Safe to call more than once per frame — only the first call acts.
+ * Whatever the outcome, the movement keys get masked for the rest of the
+ * frame so gameplay code can't steal an input the panel owns.
+ */
+HUD.updateOverlays = function (dt)
+{
+    HUD.tick++;
+    // undo last frame's mask BEFORE reading anything
+    HUD.restoreMovement();
+
+    if (typeof timeReal != 'undefined')
+    {
+        if (HUD.lastUpdateFrame === timeReal)
+        {
+            // LittleJS's fixed-step loop can run gameUpdate twice for one
+            // timeReal; the second pass only re-applies the mask
+            hudMaskMovement();
+            return false;
+        }
+        HUD.lastUpdateFrame = timeReal;
+    }
+    if (typeof dt != 'number' || dt < 0) dt = typeof timeDelta != 'undefined' ? timeDelta : 1/60;
+    try { return hudOverlayKeys(dt); }
+    finally { hudMaskMovement(); }
+};
+
+function hudOverlayKeys(dt)
+{
+    HUD.overlayMsgT = Math.max(0, HUD.overlayMsgT - dt);
+    if (!HUD.overlayMsgT) HUD.overlayMsg = '';
+
+    // the key that opened/closed the panel stays latched until it is released,
+    // so one physical press can never toggle a panel twice
+    if (HUD.overlayLatch)
+    {
+        const code = HUD.overlayLatch;
+        const stillDown = typeof keyIsDown == 'function' && keyIsDown(code);
+        if (!stillDown) HUD.overlayLatch = false;
+        return true;
+    }
+
+    const s = hudState();
+    const talking = hudDialogBusy();
+    const hit = k => typeof keyWasPressed == 'function' && keyWasPressed(k);
+
+    // ---- Q: quit to title --------------------------------------------------
+    if (!talking && hit('KeyQ') && (s == 'world' || s == 'play' || s == 'results'))
+    {
+        HUD.quitToTitle();
+        return true;
+    }
+
+    if (talking) return false;
+
+    // ---- E / R / ESC -------------------------------------------------------
+    if (hit('KeyE')) { HUD.showInventory('KeyE'); return true; }
+    if (hit('KeyR')) { HUD.showPauseMenu('KeyR'); return true; }
+    if (hit('Escape'))
+    {
+        if (HUD.overlay) HUD.hideOverlays('Escape');   // close
+        else HUD.showPauseMenu('Escape');             // open the menu
+        return true;
+    }
+
+    if (!HUD.overlay) return false;
+
+    // ---- navigation --------------------------------------------------------
+    if (HUD.overlay == 'pause')
+    {
+        const n = HUD.PAUSE_ITEMS.length;
+        let d = 0;
+        if (hit('ArrowDown') || hit('KeyS')) d = 1;
+        if (hit('ArrowUp')   || hit('KeyW')) d = -1;
+        if (d) { HUD.overlaySel = (HUD.overlaySel + d + n) % n; return true; }
+        if (hit('Enter') || hit('NumpadEnter') || hit('Space'))
+        { hudPauseAction(HUD.overlaySel); return true; }
+    }
+    return true;
+};
+
+///////////////////////////////////////////////////////////////////////////////
+// input masking — an open overlay owns the movement keys
+//
+// LittleJS does not rasterise draw calls immediately (they go into the WebGL
+// batch and are flushed in the render pass), and engineObjectsUpdate() — what
+// runs Player.update() and PlayNote.tick() — happens AFTER gameUpdate(). So
+// while a panel is open we save the movement keys and zero them for the rest
+// of the frame; the save is undone at the top of the NEXT frame's
+// updateOverlays(). That keeps the mask live across gameUpdate,
+// gameUpdatePost and engineObjectsUpdate, without ever touching the engine's
+// own edge-bit bookkeeping (inputUpdatePost does its `&= 1` regardless).
+///////////////////////////////////////////////////////////////////////////////
+
+const HUD_MASK_KEYS = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',
+                       'KeyW','KeyA','KeyS','KeyD'];
+
+/** undo the previous frame's mask — call FIRST, before any key is read */
+HUD.restoreMovement = function ()
+{
+    const save = HUD.mask;
+    if (!save) return;
+    HUD.mask = null;
+    // only ever restore a mask that is one frame old: LittleJS clears all
+    // input when the canvas loses focus, and resurrecting a stale hold would
+    // leave the player walking into a wall on their own
+    if (HUD.maskTick >= 0 && HUD.tick - HUD.maskTick > 2) return;
+    const d = (typeof inputData != 'undefined' && inputData) ? inputData[0] : null;
+    if (d) for (const k in save) d[k] = save[k];
+};
+
+/** apply the mask for the rest of this frame — call LAST */
+function hudMaskMovement()
+{
+    HUD.restoreMovement();
+    if (!HUD.overlay) return;
+    const d = (typeof inputData != 'undefined' && inputData) ? inputData[0] : null;
+    if (!d) return;
+    const save = {};
+    for (const k of HUD_MASK_KEYS)
+        if (d[k]) { save[k] = d[k] & 1; d[k] = 0; }   // keep the HOLD bit only
+    if (Object.keys(save).length) { HUD.mask = save; HUD.maskTick = HUD.tick; }
+}
+
+/**
+ * LittleJS plugin hook. Plugin `update` runs after gameUpdate() but still
+ * before engineObjectsUpdate(), so parking the player here means the walk that
+ * follows this frame starts from a dead stop. Optional: without it the panels
+ * still open and close, they just ease to a halt instead of snapping.
+ */
+function hudHookPostUpdate()
+{
+    if (HUD.postHooked) return;
+    if (typeof engineAddPlugin != 'function') return;
+    try
+    {
+        engineAddPlugin(function ()
+        {
+            if (!HUD.overlay) return;
+            try { if (typeof player != 'undefined' && player) player.vel = vec2(); }
+            catch (e) {}
+        });
+        HUD.postHooked = true;
+    }
+    catch (e) {}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// overlay rendering — called at the end of hudWorld()/hudPlay()/hudResults()
+///////////////////////////////////////////////////////////////////////////////
+
+/** dim the field, then draw whatever panel is open */
+HUD.renderOverlay = function ()
+{
+    if (!HUD.overlay) return false;
+    const S = mainCanvasSize, C = DATA.c;
+    const p = clamp(HUD.overlayT / .18);
+    const ease = 1 - Math.pow(1 - p, 3);
+
+    drawRect(vec2(S.x/2, S.y/2), S, alpha(C.bg, .74 * ease), 0, true, true);
+    if (HUD.overlay == 'inventory') hudDrawInventory(ease);
+    else hudDrawPause(ease);
+    return true;
+};
+
+/** the scrim + panel chrome every overlay shares; returns the inner content box */
+function hudOverlayFrame(title, w, h, accent)
+{
+    const S = mainCanvasSize, C = DATA.c;
+    const p = clamp(HUD.overlayT / .18);
+    const ease = 1 - Math.pow(1 - p, 3);
+    const x = (S.x - w)/2, y = (S.y - h)/2;
+
+    drawRect(vec2(S.x/2, y + h + 16), vec2(w*.9, 3), alpha(accent, .3*ease), 0, true, true);
+    uiPanel(x, y, w, h, alpha(accent, .35 + .35*ease), 22);
+    uiSpaced(title, S.x/2, y + 46, clamp(S.x*.032, 17, 28), C.ink, 3,
+        { align:'center', font: DATA.ui.font, style:'900',
+          lineWidth: 5, lineColor: alpha(C.bg, .8) });
+    uiZigRule(x + 40, x + w - 40, y + 64, 10, 4, 2, alpha(accent, .5*ease));
+    return { x, y, w, h, ease, inner: x + 34, iw: w - 68 };
+}
+
+/** "E / ESC — CLOSE" footer, plus any transient flash message */
+function hudOverlayFooter(box, hint)
+{
+    const S = mainCanvasSize, C = DATA.c;
+    const pulse = .5 + .5*sin(HUD.t*3.4);
+    uiText(hint, box.x + box.w/2, box.y + box.h - 24,
+        clamp(S.x*.017, 11, 15), alpha(C.ink, .35 + pulse*.45),
+        { align:'center', font: DATA.ui.font, style:'900' });
+    if (HUD.overlayMsgT > 0)
+    {
+        const a = Math.min(1, HUD.overlayMsgT);
+        uiText(HUD.overlayMsg, box.x + box.w/2, box.y + box.h - 44,
+            clamp(S.x*.017, 11, 15), alpha(C.gold, .5 + .5*Math.sin(HUD.t*8)*a),
+            { align:'center', font: DATA.ui.font, style:'900' });
+    }
+}
+
+function hudSectionLabel(x, y, text, color)
+{
+    uiText(text, x, y, 12, alpha(color, .9), { font: DATA.ui.font, style:'900' });
+    uiZigRule(x, x + 92, y + 10, 6, 3, 1.5, alpha(color, .4));
+}
+
+// ---- inventory -------------------------------------------------------------
+
+function hudDrawInventory(ease)
+{
+    const S = mainCanvasSize, C = DATA.c;
+    const ps  = hudSyncPlayerState();
+    const inv = hudInventory();
+    const w = Math.min(S.x - 40, 620), h = Math.min(S.y - 24, clamp(S.y*.82, 340, 520));
+    const box = hudOverlayFrame('INVENTORY', w, h, C.cyan);
+    const x = box.inner, iw = box.iw;
+    const frac = ps.maxHp > 0 ? ps.hp / ps.maxHp : 0;
+
+    let y = box.y + 100;
+    const rowH = 26;
+
+    // ---- stats -------------------------------------------------------------
+    hudSectionLabel(x, y, 'STATS', C.cyan);
+    y += 22;
+    uiText('LV', x, y, 14, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiText(String(ps.level), x + 88, y + 1, 16, C.gold,
+        { align:'right', font: DATA.ui.font, style:'900' });
+    uiText('BEST', x + 120, y, 14, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiText(String(best || 0).padStart(6,'0'), x + iw, y + 1, 16, C.gold,
+        { align:'right', font: DATA.ui.font, style:'900' });
+    y += 24;
+    uiText('HP', x, y, 14, alpha(C.dim, .95), { font: DATA.ui.font });
+    uiBar(x + 40, y - 3, iw - 150, 14, frac, hudHPColor(frac), alpha(C.bg, .75));
+    uiText(Math.ceil(ps.hp) + ' / ' + ps.maxHp, x + iw, y + 1, 15, C.ink,
+        { align:'right', font: DATA.ui.font, style:'900' });
+    y += 30;
+
+    // ---- weapons -----------------------------------------------------------
+    hudSectionLabel(x, y, 'WEAPONS', C.neon);
+    y += 22;
+    for (const wp of inv.weapons)
+    {
+        const atk = wp.atk === undefined ? wp.power : wp.atk;
+        drawRect(vec2(x + iw/2, y + 9), vec2(iw, rowH - 3), alpha(C.neon, .09), 0, true, true);
+        uiText(String(wp.name).toUpperCase(), x + 12, y + 9, 15, C.ink,
+            { font: DATA.ui.font, style:'900' });
+        uiText('ATK ' + atk, x + iw - 12, y + 9, 15, C.neonSoft,
+            { align:'right', font: DATA.ui.font, style:'900' });
+        y += rowH;
+        if (wp.desc)
+        {
+            uiText(wp.desc, x + 12, y - 4, 12, alpha(C.dim, .85), { font: DATA.ui.soft });
+            y += 18;
+        }
+    }
+    y += 10;
+
+    // ---- items -------------------------------------------------------------
+    hudSectionLabel(x, y, 'ITEMS', C.gold);
+    y += 22;
+    for (const it of inv.items)
+    {
+        const qty = it.qty === undefined ? 1 : it.qty;
+        drawRect(vec2(x + iw/2, y + 9), vec2(iw, rowH - 3), alpha(C.gold, .09), 0, true, true);
+        uiText(String(it.name).toUpperCase(), x + 12, y + 9, 15, C.ink,
+            { font: DATA.ui.font, style:'900' });
+        uiText('×' + qty, x + iw - 12, y + 9, 15, C.gold,
+            { align:'right', font: DATA.ui.font, style:'900' });
+        y += rowH;
+        if (it.desc)
+        {
+            uiText(it.desc, x + 12, y - 4, 12, alpha(C.dim, .85), { font: DATA.ui.soft });
+            y += 18;
+        }
+    }
+
+    hudOverlayFooter(box, 'E  or  ESC  —  CLOSE');
+}
+
+// ---- pause menu ------------------------------------------------------------
+
+function hudDrawPause(ease)
+{
+    const S = mainCanvasSize, C = DATA.c;
+    const items = HUD.PAUSE_ITEMS;
+    const w = Math.min(S.x - 40, 460), h = Math.min(S.y - 24, 96 + items.length*46);
+    const box = hudOverlayFrame('MENU', w, h, C.neon);
+    const x = box.inner, iw = box.iw, rowH = 42;
+    let y = box.y + 92;
+
+    for (let i = 0; i < items.length; ++i)
+    {
+        const sel = i == HUD.overlaySel;
+        const yy = y + i*rowH;
+        if (sel)
+        {
+            drawRect(vec2(x + iw/2, yy + 16), vec2(iw, rowH - 6), alpha(C.neon, .17), 0, true, true);
+            drawRect(vec2(x, yy + 16), vec2(3, rowH - 6), C.neon, 0, true, true);
+        }
+        uiZig([vec2(x + 14, yy + 22), vec2(x + 22, yy + 10), vec2(x + 30, yy + 22)], 2.5,
+            alpha(C.neon, sel ? .95 : .25));
+        uiText(items[i], x + 46, yy + 18, 19, sel ? C.ink : alpha(C.dim, .95),
+            { font: DATA.ui.font, style: sel ? '900' : 'bold' });
+        if (sel)
+            uiText('ENTER', x + iw - 12, yy + 18, 13, C.neon,
+                { align:'right', font: DATA.ui.font, style:'900' });
+    }
+
+    y += items.length*rowH + 4;
+    uiText('↑ ↓  MOVE     ·     ENTER  SELECT     ·     Q  QUIT', x + iw/2, y,
+        12, alpha(C.dim, .75), { align:'center', font: DATA.ui.soft });
+
+    hudOverlayFooter(box, 'R  or  ESC  —  RESUME');
 }
