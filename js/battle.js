@@ -47,7 +47,8 @@
 //                             ▼
 //                     EXECUTE_COMMAND  (attack anim, damage numbers float)
 //                             ▼
-//                       ENEMY_TURN     (enemy hits back, DEF applies)
+//                       ENEMY_TURN     (enemy ATTACKS IN A DIALOG BOX — see
+//                                       "the enemy does not play" below)
 //                             ▼
 //                       SECTION_BREAK  (short pause)
 //                             ▼
@@ -60,9 +61,21 @@
 //   enemy HP <= 0 → BATTLE_WON, player HP <= 0 → BATTLE_LOST, then onBattleEnd.
 //
 // ---------------------------------------------------------------------------
+// THE ENEMY DOES NOT PLAY THE RHYTHM GAME
+//
+//   There is no enemy-side chart, no enemy notes and no enemy judging. The
+//   enemy simply attacks, and the attack is narrated in a bottom-anchored
+//   dialog panel (speaker name / attack line / "-14"). Damage comes from the
+//   enemy's own attacks[].power plus the player's DEF + reduction rules —
+//   never from the player's note accuracy. Only the PLAYER is judged in the
+//   rhythm, and only the player's own commands read their performance.
+//
+//   The enemy's intent (its telegraphed next move, shown in the menu before
+//   the player commits) stays: that is flavor, not rhythm.
+//
+// ---------------------------------------------------------------------------
 // MECHANICS (locked)
 //   atkBonus    = floor(score / 10000)
-//   defBonus    = floor(accuracyPercent / 10)
 //   critChance  = min(30, 5 + floor(combo / 20))   — crits deal x2
 //   ATTACK      = weapon power + atkBonus
 //   DEFEND      = -35% damage this turn, +5 DEF this turn only
@@ -72,7 +85,9 @@
 //   USE_ITEM    = item sub-menu; the item resolves, enemy still attacks
 //   SPECATTACK  = spec chart result decides: >=70% → 3x base, else 1x base
 //   damage taken = max(1, round(raw*(1-reduction) - totalDef*0.5))
-//                 totalDef = playerState.def + defBonus + turn/persist DEF
+//                 raw      = the enemy's own attack power
+//                 totalDef = playerState.def + turn/persist DEF
+//                 (no accuracy term — the enemy is not scored by the rhythm)
 ///////////////////////////////////////////////////////////////////////////////
 (function () {
 'use strict';
@@ -95,7 +110,9 @@ const DESC = {
 // phase lengths, seconds
 const T = {
     exec: 1.15, execHit: 0.40,     // player command anim / damage lands
-    enemy: 1.50, enemyHit: 0.80,   // enemy telegraph / hit lands
+    enemyHit: 0.70,                // enemy telegraph -> its attack lands
+    enemyHold: 1.20,               // enemy dialog stays up this long after the
+                                   // hit before the turn moves on (Enter skips)
     brk: 0.70,                     // pause before the next rhythm section
     banner: 1.40,                  // win/lose banner before onBattleEnd
 };
@@ -179,6 +196,11 @@ const B = {
     newItems: [],
 
     intent: null, intentIndex: 0,
+    flavorSeed: 0,
+
+    // the enemy attack dialog (ENEMY_TURN only) — built when the turn opens,
+    // rendered as a bottom-anchored panel: speaker / attack line / "-14"
+    dialog: null,
 
     phase: 0, hitDone: false, ended: false,
     lastCommand: '',
@@ -209,9 +231,11 @@ function normalizeAttacks(list)
                 out.push({
                     name: String(a.name || a.label || 'STRIKE').toUpperCase(),
                     power: Math.max(1, a.power || a.damage || a.dmg || a.atk || 8),
+                    // optional verbatim narration, shown in the enemy dialog
+                    line: a.line || a.text || a.message || a.desc || '',
                 });
         }
-    if (!out.length) out.push({ name: 'STRIKE', power: 8 });
+    if (!out.length) out.push({ name: 'STRIKE', power: 8, line: '' });
     return out;
 }
 
@@ -279,15 +303,90 @@ function itemName(it)
 
 function weapon() { return B.weapons[B.weaponIndex] || B.weapons[0] || { name: 'FISTS', power: 4 }; }
 function atkBonus() { return Math.floor(B.score / 10000); }
-function defBonus() { return Math.floor(B.accuracy / 10); }
 function critChance() { return Math.min(30, 5 + Math.floor(B.combo / 20)); }
 function baseAttack() { return weapon().power + atkBonus(); }
+
+// the player's own DEF only — note accuracy deliberately contributes nothing
+// here, so the enemy's attack is never a reaction to the player's rhythm
+function totalDef() { return B.def + B.defTurn + B.defPersist; }
 
 function damageToEnemy(amount)
 {
     if (amount <= 0) return 0;
     B.pendingCrit = Math.random() * 100 < critChance();
     return Math.max(1, Math.round(amount * (B.pendingCrit ? 2 : 1)));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// enemy dialog copy
+//
+// The enemy does not play the rhythm game — it just attacks, and the attack is
+// narrated. Everything here is derived from the enemy's OWN config (its name
+// and attacks[].name / attacks[].line); the player's score, combo and note
+// accuracy never reach it.
+//
+///////////////////////////////////////////////////////////////////////////////
+
+const FLAVOR_ADV  = ['crackles and', 'coils and', 'hunches and', 'spins and', 'shudders and'];
+const FLAVOR_VERB = ['hurls', 'launches', 'drives', 'flings', 'unleashes'];
+const FLAVOR_NOUN = ['a bolt', 'a wave', 'a surge', 'a volley', 'a spike'];
+
+// "STATIC WARDEN" -> "Static Warden" — dialog prose reads better than shouting
+function proseCase(s)
+{
+    return String(s == null ? '' : s).toLowerCase()
+        .replace(/(^|[\s\-_'"])([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
+}
+
+// seed 0 -> "Static Warden crackles and hurls a bolt at you!"
+function flavorLine(who, seed)
+{
+    const i = Math.abs(seed | 0);
+    return who + ' ' + FLAVOR_ADV[i % FLAVOR_ADV.length] + ' ' +
+        FLAVOR_VERB[i % FLAVOR_VERB.length] + ' ' +
+        FLAVOR_NOUN[(i * 3) % FLAVOR_NOUN.length] + ' at you!';
+}
+
+// greedy word wrap, hard-capped at maxLines with an ellipsis on the last one
+function wrapLines(str, maxChars, maxLines)
+{
+    maxChars = Math.max(8, maxChars | 0);
+    maxLines = Math.max(1, maxLines | 0);
+    const words = String(str == null ? '' : str).split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = '';
+    for (const w of words)
+    {
+        const cand = cur ? cur + ' ' + w : w;
+        if (cand.length <= maxChars || !cur) cur = cand;
+        else { lines.push(cur); cur = w; }
+    }
+    if (cur) lines.push(cur);
+    if (lines.length > maxLines)
+    {
+        lines.length = maxLines;
+        lines[maxLines - 1] =
+            lines[maxLines - 1].slice(0, maxChars - 1).replace(/\s+\S*$/, '') + '…';
+    }
+    return lines;
+}
+
+// called the instant ENEMY_TURN opens — freezes the narration so it cannot
+// flicker between frames
+function buildEnemyDialog()
+{
+    const who = proseCase(B.enemy ? B.enemy.name : 'Enemy');
+    const atk = B.intent || { name: 'STRIKE', power: 8, line: '' };
+    B.flavorSeed = (B.flavorSeed + 1) % 1000;
+    B.dialog = {
+        speaker: who,
+        // attacks[].line / .text is used verbatim when present
+        lead: atk.line ? String(atk.line) : who + ' uses ' + proseCase(atk.name) + '!',
+        // seed 0 first, so the opening line reads "… crackles and hurls a bolt
+        // at you!" — the cycle only kicks in from the second attack on
+        flavor: flavorLine(who, B.flavorSeed - 1),
+        dmg: 0, hit: false,
+    };
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -348,6 +447,7 @@ function start(enemyConfig, playerState, onBattleEnd, opts)
     B.toast = ''; B.toastLife = 0;
     B.enemyFlash = 0; B.playerFlash = 0; B.enemyOx = 0; B.enemyOy = 0;
     B.intentIndex = 0; B.intent = rollIntent();
+    B.flavorSeed = 0; B.dialog = null;
     B.onEnd = typeof onBattleEnd == 'function' ? onBattleEnd : null;
     B.onSection = typeof opts.onSectionStart == 'function' ? opts.onSectionStart : null;
     loadSprite(B.enemy.sprite);
@@ -360,7 +460,7 @@ function stop()
     B.onEnd = null; B.onSection = null;
     B.enemy = null; B.player = null;
     B.items = []; B.newItems = [];
-    B.toastLife = 0;
+    B.dialog = null; B.toastLife = 0;
 }
 
 function syncPlayer()
@@ -454,7 +554,7 @@ function execute(cmd)
     else if (cmd == 'DEFAULT')
     {
         // guaranteed >=25%, scales with performance (100% acc -> 50% cut)
-        B.reduction = clampN(Math.max(0.25, B.accuracy * 0.0025), 0.25, 0.6);
+        B.reduction = clampN(Math.max(0.25, B.accuracy * 0.005), 0.25, 0.6);
         B.defPersist = 5;
     }
     else if (cmd == 'BRAVE')
@@ -686,9 +786,14 @@ function phaseExec(dt)
         if (B.eHp <= 0) { win(); return; }
         B.state = 'ENEMY_TURN';
         B.phase = 0; B.hitDone = false;
+        buildEnemyDialog();       // the enemy narrates its attack in a dialog
     }
 }
 
+// The enemy does not play the rhythm game: it opens a dialog, the attack
+// lands on a fixed beat, the "-14" pops, and the dialog either auto-advances
+// or is cut short with Enter/Space. Nothing here reads the player's score,
+// combo or accuracy.
 function phaseEnemy(dt)
 {
     B.phase += dt;
@@ -701,17 +806,20 @@ function phaseEnemy(dt)
     if (!B.hitDone && B.phase >= T.enemyHit)
     {
         B.hitDone = true;
+        // damage = the enemy's own attack power, reduced by the player's
+        // chosen DEFEND/DEFAULT/BRAVE stance and their standing DEF
         const raw = B.intent ? B.intent.power : 8;
-        const totalDef = B.def + defBonus() + B.defTurn + B.defPersist;
-        const taken = Math.max(1, Math.round(raw * (1 - B.reduction) - totalDef * 0.5));
+        const taken = Math.max(1, Math.round(raw * (1 - B.reduction) - totalDef() * 0.5));
         B.hp = Math.max(0, B.hp - taken);
         B.playerFlash = 1;
+        if (B.dialog) { B.dialog.dmg = taken; B.dialog.hit = true; }
         spawnDamage(playerScreenPos(), '-' + taken, pal().bad, 1);
-        toast((B.intent ? B.intent.name : 'ATTACK') + '!', 0.9);
         syncPlayer();
     }
-    if (B.phase >= T.enemy)
+    // auto-advance once the dialog has had its beat; Enter/Space skips the wait
+    if (B.hitDone && (B.phase >= T.enemyHit + T.enemyHold || confirmPressed()))
     {
+        B.dialog = null;
         if (B.hp <= 0) { lose(); return; }
         B.state = 'SECTION_BREAK';
         B.phase = 0;
@@ -867,7 +975,7 @@ function render()
     else if (B.state == 'ITEM_SELECT') renderItems(S, P);
     else if (B.state == 'SPEC_CHART') renderSpecBanner(S, P);
     else if (B.state == 'EXECUTE_COMMAND') renderCommandFlash(S, P);
-    else if (B.state == 'ENEMY_TURN') renderEnemyTurn(S, P);
+    else if (B.state == 'ENEMY_TURN') renderEnemyDialog(S, P);
     else if (B.state == 'BATTLE_WON' || B.state == 'BATTLE_LOST') renderBanner(S, P);
 
     renderToast(S, P);
@@ -981,7 +1089,7 @@ function renderPlayerRow(S, P)
     textScreen(String(Math.round(B.score)).padStart(6, '0'), S.x - 20, y + 2, 22, P.ink,
         'right', fontOf(), 0, undefined, '1px');
     textScreen('SCORE', S.x - 20, y - 14, 11, A(P.dim, 0.95), 'right', fontOf());
-    textScreen('ATK +' + atkBonus() + '   DEF +' + (B.def + defBonus()) +
+    textScreen('ATK +' + atkBonus() + '   DEF +' + totalDef() +
         '   CRIT ' + critChance() + '%', S.x - 20, y + 22, 12, A(P.cyan, 0.9),
         'right', fontOf());
 }
@@ -1018,6 +1126,16 @@ function renderMenu(S, P)
         const disabled = COMMANDS[i] == 'USE_ITEM' && !B.items.length;
         textScreen(COMMANDS[i], bx + cw / 2 + (sel ? 8 : 0), by + ch / 2 + 6,
             clampN(cw * 0.13, 13, 20), disabled ? A(P.dim, 0.4) : (sel ? P.ink : A(P.dim, 0.95)),
+            'center', fontOf(), 0, undefined, '1px');
+    }
+
+    // the enemy's telegraphed next move — flavour, shown before the player
+    // commits to a command. It is not a rhythm hook, just a warning.
+    if (B.intent)
+    {
+        const ip = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(B.t * 3.4));
+        textScreen('ENEMY: ' + proseCase(B.intent.name) + '   ·   ' + B.intent.power + ' POW',
+            x + w / 2, y - 14, 13, A(P.bad, 0.55 + ip * 0.45),
             'center', fontOf(), 0, undefined, '1px');
     }
 
@@ -1085,17 +1203,76 @@ function renderCommandFlash(S, P)
             S.x / 2, S.y * 0.52 + 26, 14, A(P.cyan, a), 'center', fontOf(true));
 }
 
-function renderEnemyTurn(S, P)
+// ---------------------------------------------------------------------------
+// the enemy attack dialog — bottom-anchored neon panel:
+//   [ STATIC WARDEN ]
+//   Static Warden uses FROST RING!                -14
+//   Static Warden crackles and hurls a bolt at you!
+//                                                  ENTER ▸
+// ---------------------------------------------------------------------------
+function renderEnemyDialog(S, P)
 {
-    const a = clamp01(1.6 - B.phase / T.enemy);
-    const name = B.intent ? B.intent.name : 'ATTACK';
-    const power = B.intent ? B.intent.power : 8;
-    textScreen('ENEMY USES ' + name + '!', S.x / 2, S.y * 0.50,
-        clampN(S.x * 0.045, 20, 40), A(P.bad, a),
-        'center', fontOf(), 6, A(P.bg, a * 0.85), '2px');
-    textScreen('POWER ' + power +
-        (B.reduction > 0 ? '   ·   GUARDED' : B.reduction < 0 ? '   ·   EXPOSED!' : ''),
-        S.x / 2, S.y * 0.50 + 26, 14, A(P.gold, a * 0.95), 'center', fontOf(true));
+    const dlg = B.dialog || { speaker: proseCase(B.enemy.name), lead: '', flavor: '' };
+    const inK = smooth(clamp01(B.phase / 0.18));
+
+    const w = Math.min(S.x - 40, 920);
+    const x = (S.x - w) / 2;
+    const h = clampN(S.y * 0.23, 122, 170);
+    const y = S.y - h - 20 + (1 - inK) * 36;
+
+    panel(x, y, w, h, A(P.neon, 0.55), 18);
+
+    // speaker plate, notched over the panel's top edge
+    const plateW = clampN(w * 0.32, 150, 300), plateH = 30;
+    const plateX = x + 20, plateY = y - plateH / 2 + 1;
+    panel(plateX, plateY, plateW, plateH, A(P.cyan, 0.8), 10);
+    textScreen(String(dlg.speaker || '').toUpperCase(), plateX + plateW / 2,
+        plateY + plateH / 2 + 6, clampN(plateW * 0.072, 12, 17),
+        P.ink, 'center', fontOf(), 4, A(P.bg, 0.85), '2px');
+
+    const fs = clampN(S.x * 0.0205, 14, 20);
+    const lh = fs * 1.32;
+    const maxChars = Math.floor((w - 230) / (fs * 0.56));   // leave room for "-14"
+    let ty = y + 44;
+
+    // attack line — 1 line, clipped so the panel never overflows
+    for (const ln of wrapLines(dlg.lead, maxChars, 1))
+    {
+        textScreen(ln, x + 26, ty, fs, A(P.ink, inK), 'left', fontOf(), 0, undefined, '1px');
+        ty += lh;
+    }
+
+    // flavour line — up to 2 lines
+    ty += 2;
+    for (const ln of wrapLines(dlg.flavor, maxChars, 2))
+    {
+        textScreen(ln, x + 26, ty, fs * 0.92, A(P.neonSoft, 0.95 * inK),
+            'left', fontOf(true));
+        ty += lh * 0.95;
+    }
+
+    // damage readout, right aligned against the attack line
+    if (dlg.hit && dlg.dmg != null)
+    {
+        const pop = 1 + Math.max(0, 0.22 - (B.phase - T.enemyHit)) * 2.2;
+        const dx = x + w - 26;
+        textScreen('-' + dlg.dmg, dx, y + 42, clampN(S.x * 0.036 * pop, 18, 34),
+            P.bad, 'right', fontOf(), 6, A(P.bg, 0.9), '2px');
+        const tag = B.reduction > 0 ? 'GUARDED' : B.reduction < 0 ? 'EXPOSED' : '';
+        if (tag)
+            textScreen(tag, dx, y + 62, 12,
+                B.reduction < 0 ? P.bad : A(P.gold, 0.95), 'right', fontOf(true));
+        textScreen(String(dlg.dmg) + ' DAMAGE', dx, y + (tag ? 80 : 62), 11,
+            A(P.dim, 0.9), 'right', fontOf(true));
+    }
+
+    // advance prompt — fades in only once the attack has landed
+    if (dlg.hit)
+    {
+        const blink = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(B.t * 7));
+        textScreen('ENTER / SPACE', x + w - 26, y + h - 16, 11,
+            A(P.cyan, 0.55 * blink), 'right', fontOf(true), 0, undefined, '1px');
+    }
 }
 
 function renderBanner(S, P)
@@ -1136,7 +1313,7 @@ window.Battle = {
     getIntent: () => B.intent,
     getStats: () => ({
         atk: baseAttack(), atkBonus: atkBonus(),
-        def: B.def + defBonus() + B.defTurn + B.defPersist,
+        def: totalDef(),
         critChance: critChance(),
     }),
 };
