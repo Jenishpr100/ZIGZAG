@@ -15,7 +15,7 @@
 //
 // BRANCHING (`options` of the `muzic-switch-world` schema):
 //   A dialog may carry `options: [{text, goto}]` — 1..6 choices shown after the
-//   last page instead of closing. Up/Down move the selection, Enter/Space (or a
+//   last page instead of closing. Up/Down move the selection, Space (or a
 //   number key) confirm.
 //     goto: null    → the box closes right away.
 //     goto: "<id>"  → straight into that dialog's pages (and its own options).
@@ -105,7 +105,7 @@ function dlgHeld(code)
 
 function dlgAdvanceHeld()
 {
-    return dlgHeld('Enter') || dlgHeld('NumpadEnter') || dlgHeld('Space') || dlgHeld('Escape');
+    return dlgHeld('Space') || dlgHeld('Escape');
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -181,7 +181,7 @@ function dlgStart(def)
     Dialog.open      = true;
     Dialog.lastRenderFrame = -1;   // force a redraw on the very next render pass
 
-    // if a key is already down (the Enter that opened this), latch so the same
+    // if a key is already down (the Space that opened this), latch so the same
     // press can never also advance a page or pick a choice
     if (dlgAdvanceHeld()) Dialog.latch = true;
 
@@ -370,7 +370,7 @@ Dialog.update = function (dt)
 
     if (Dialog.choosing) { Dialog.updateChoiceList(); return; }
 
-    const advance = dlgPressed('Enter') || dlgPressed('NumpadEnter') || dlgPressed('Space');
+    const advance = dlgPressed('Space');
 
     // last page done and the dialog branches → raise the choice list instead of
     // closing (it appears the moment the typewriter finishes, no extra press)
@@ -422,7 +422,7 @@ Dialog.updateChoiceList = function ()
         }
     }
 
-    if (dlgPressed('Enter') || dlgPressed('NumpadEnter') || dlgPressed('Space'))
+    if (dlgPressed('Space'))
         return Dialog.pickOption(Dialog.sel);
     return false;
 };
@@ -615,7 +615,7 @@ Dialog.renderBox = function ()
         if (complete && !showChoices)
         {
             const pulse = .45 + .55 * sin(Dialog.t * 5);
-            uiText('▼ ENTER', tx1, py + h - 16, 13, alpha(C.ink || WHITE, .35 + pulse * .6),
+            uiText('▼ SPACE', tx1, py + h - 16, 13, alpha(C.ink || WHITE, .35 + pulse * .6),
                 { align: 'right', font: DATA.ui.font, style: '900' });
         }
     }
@@ -629,7 +629,7 @@ Dialog.renderBox = function ()
         if (typeof uiText == 'function')
         {
             const pulse = .45 + .55 * sin(Dialog.t * 5);
-            uiText('▲▼ MOVE · ENTER PICK', tx1, ruleY - 4, 11,
+            uiText('▲▼ MOVE · SPACE PICK', tx1, ruleY - 4, 11,
                 alpha(C.dim || WHITE, .30 + pulse * .45), { align: 'right', font: soft });
         }
 

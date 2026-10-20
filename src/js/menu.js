@@ -74,7 +74,7 @@
     const l = $('#logo'); l.textContent = '';
     // A1: game title is MuZiC "Switch" — one <span> per char keeps the zigzag CSS animation
     // (css/styles.css .logo span:nth-child(odd/even)); spaces render as NBSP so spans keep them.
-    'MuZiC "Switch"'.split('').forEach(ch => {
+    'MuZiC Switch'.split('').forEach(ch => {
       const s = document.createElement('span');
       s.textContent = ch === ' ' ? '\u00A0' : ch;
       l.appendChild(s);
@@ -275,6 +275,23 @@
     $('#r-songs').addEventListener('click', () => M.go('songs')); $('#r-menu').addEventListener('click', () => M.go('menu'));
     $('#err-back').addEventListener('click', () => M.go('songs'));
   }
+  /* R key in the LittleJS lane: toggle the pause overlay. The engine owns the
+     canvas while body.zz-lane is set; the DOM menu still owns the overlay. */
+  document.addEventListener('keydown', e => {
+    if (e.code !== 'KeyR') return;
+    if (!document.body.classList.contains('zz-lane')) return;
+    const st = Z.Game && Z.Game.state;
+    if (st !== 'play' && st !== 'world') return;
+    e.preventDefault();
+    const overlay = $('#ov-pause');
+    if (overlay.classList.contains('on')) {
+      overlay.classList.remove('on');
+      if (Z.Game && Z.Game.resume) Z.Game.resume();
+    } else {
+      overlay.classList.add('on');
+      if (Z.Game && Z.Game.pause) Z.Game.pause();
+    }
+  });
   M.showOverlay = function (name, msg) {
     const G = Z.Game;
     if (name === 'loading') setOverlay('loading');

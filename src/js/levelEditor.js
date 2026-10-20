@@ -14,7 +14,7 @@
     root.setProperty('--gold', theme.drag);
   }
   const $ = id => document.getElementById(id);
-  const laneKeys = ['D', 'F', 'J', 'K'];
+  const laneKeys = ['→', '↓', '↑', '←'];
   let level, currentSong = null, isPlaying = false, recording = false, completed = false;
   let audioDuration = 0, sceneCanvas = null, gesture = null, audioFileUrl = null;
   let undoStack = [], redoStack = [], historySnapshot = '';

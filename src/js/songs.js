@@ -1,12 +1,14 @@
 /* songs.js — song list + BPM parsing.
    Browsers cannot list a folder from file://, so songs come from js/song-manifest.js.
-   BPM values come from js/songs-bpm.txt (plain text). Browsers often block reading that file
-   from file://, so the manifest embeds a copy (ZIGZAG_SONGS.bpm) as a fallback, and the Song
-   Select screen can also import a BPM text file with a file picker. */
+   BPM values are embedded below (ZIGZAG_BPM_TEXT) so no XHR/file access is needed.
+   The Song Select screen can also import a BPM text file with a file picker. */
 (function () {
   const Z = (window.ZZ = window.ZZ || {});
   const FILE_RE = /^(\d+)-(.+)\.(mp3|wav|ogg|m4a|aac|webm|flac)$/i; // numbered, browser-playable audio filename
   const DEFAULT_BPM = 120;
+
+  /* Embedded copy of src/js/songs-bpm.txt — keeps file:// working with no XHR. */
+  const ZIGZAG_BPM_TEXT = '1=120\n2=172\n3=90\n4=135\n5=108\n6=160';
 
   function parseFilename(file) {
     const m = FILE_RE.exec(String(file).trim());
@@ -32,16 +34,7 @@
     return { map, errors };
   }
 
-  function readBmpFile(cb) {            // works on http(s) and some browsers; fails quietly on file://
-    try {
-      const x = new XMLHttpRequest();
-      x.open('GET', 'js/songs-bpm.txt?' + Date.now());
-      x.overrideMimeType('text/plain');
-      x.onload = () => cb((x.status === 200 || (x.status === 0 && x.responseText)) ? x.responseText : null);
-      x.onerror = () => cb(null);
-      x.send();
-    } catch (e) { cb(null); }
-  }
+  // XHR removed — BPM data is embedded above so file:// works with no network request.
 
   const Songs = Z.Songs = {
     list: [], notices: [], bpmSource: '',
@@ -76,13 +69,10 @@
         cb();
         return;
       }
-      readBmpFile(text => {
-        if (text != null) { Songs.build(text, 'js/songs-bpm.txt'); return cb(); }
-        const imported = Z.Storage.get('bmpImport', null);
-        if (imported) { Songs.build(imported, 'imported BPM list'); return cb(); }
-        Songs.build(man.bpm || '', 'built-in copy in js/song-manifest.js');
-        cb();
-      });
+      const imported = Z.Storage.get('bmpImport', null);
+      if (imported) { Songs.build(imported, 'imported BPM list'); return cb(); }
+      Songs.build(ZIGZAG_BPM_TEXT, 'embedded in js/songs.js');
+      cb();
     },
     importBmp(text) { Z.Storage.set('bmpImport', text); Songs.build(text, 'imported BPM list'); },
     clearImport() { Z.Storage.remove('bmpImport'); Songs.build((window.ZIGZAG_SONGS || {}).bpm || '', 'built-in copy in js/song-manifest.js'); },

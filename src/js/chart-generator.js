@@ -25,5 +25,22 @@
     return Math.max(1, Math.min(10, Math.round(nps * 1.9 + (diff.hold + diff.drag) * 4 + ORDER.indexOf(difficulty) * .5)));
   }
 
-  Z.Chart = { LANES, DIFFS, ORDER, gridStep, estimateStars };
+  /* Deterministic string→integer seed (FNV-1a). The same seed string always
+     yields the same 32-bit integer, so the menu's numeric-seed hint and any
+     numeric consumer stay stable across sessions. */
+  function seedToNumber(seed) {
+    const s = String(seed == null ? '' : seed);
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h | 0;
+  }
+
+  function randomSeed() {
+    return Math.floor(Math.random() * 0x100000000) - 0x80000000;
+  }
+
+  Z.Chart = { LANES, DIFFS, ORDER, gridStep, estimateStars, seedToNumber, randomSeed };
 })();

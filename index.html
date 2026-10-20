@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="format-detection" content="telephone=no">
 <title>MuZiC Switch</title>
-<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="src/css/styles.css">
 </head>
 <body>
 <!-- Everything is plain scripts + relative paths so this file works by double-clicking (file://). -->
@@ -35,7 +35,7 @@
     <header class="bar"><button class="btn mini" data-go="menu">Back</button><h2>Song Select</h2></header>
     <div class="songs-grid">
       <div class="panel"><ul id="song-list" class="song-list"></ul>
-        <p id="song-empty" class="note" hidden>No songs yet. Put MP3 files named like <code>1-My Song.mp3</code> in the songs folder, then list them in <code>songs/songs.js</code>. See README.md.</p>
+        <p id="song-empty" class="note" hidden>No songs yet. Put MP3 files named like <code>1-My Song.mp3</code> in the songs folder, then list them in <code>src/js/song-manifest.js</code>. See README.md.</p>
       </div>
       <div class="panel detail">
         <h3 id="d-name">—</h3>
@@ -57,8 +57,8 @@
     </div>
     <details class="panel notices"><summary>Song list notices (<span id="n-count">0</span>)</summary>
       <ul id="notices"></ul>
-      <p class="note">BPM source: <b id="bpm-src"></b>. Browsers usually block reading songs.bmp from a double-clicked page, so a copy lives in songs/songs.js. You can also load your edited file here:</p>
-      <div class="row"><button class="btn mini" id="btn-import">Load songs.bmp…</button><button class="btn mini" id="btn-unimport">Use built-in list</button>
+      <p class="note">BPM source: <b id="bpm-src"></b>. Browsers may block reading <code>src/js/songs-bpm.txt</code> from a double-clicked page, so a copy lives in <code>src/js/song-manifest.js</code>. You can also load an edited text file here:</p>
+      <div class="row"><button class="btn mini" id="btn-import">Load BPM list…</button><button class="btn mini" id="btn-unimport">Use built-in list</button>
         <input type="file" id="file-bmp" accept=".bmp,.txt,text/plain" hidden></div>
     </details>
   </section>
@@ -152,26 +152,26 @@
 </div></div>
 
 <noscript>MuZiC Switch needs JavaScript enabled.</noscript>
-<script src="songs/songs.js"></script>
-<script src="js/storage.js"></script>
-<script src="js/settings.js"></script>
-<script src="js/themes.js"></script>
-<script src="js/levelFormat.js"></script>
-<script src="js/worldFormat.js"></script>
-<script src="js/songs.js"></script>
-<script src="js/audio.js"></script>
-<script src="js/chart-generator.js"></script>
-<script src="js/input.js"></script>
-<script src="js/gameplay.js"></script>
-<script src="js/menu.js"></script>
-<script src="js/main.js"></script>
+<script src="src/js/song-manifest.js"></script>
+<script src="src/js/storage.js"></script>
+<script src="src/js/settings.js"></script>
+<script src="src/js/themes.js"></script>
+<script src="src/js/levelFormat.js"></script>
+<script src="src/js/worldFormat.js"></script>
+<script src="src/js/songs.js"></script>
+<script src="src/js/audio.js"></script>
+<script src="src/js/chart-generator.js"></script>
+<script src="src/js/input.js"></script>
+<script src="src/js/gameplay.js"></script>
+<script src="src/js/menu.js"></script>
+<script src="src/js/main.js"></script>
 <!-- LittleJS side: world + rhythm demo -->
-<script src="littlejs.min.js"></script>
-<script src="js/data.js"></script>
-<script src="js/battle.js"></script>
-<script src="js/overworld.js"></script>
-<script src="js/hud.js"></script>
-<script src="js/dialog.js"></script>
-<script src="js/littlejs-game.js"></script>
+<script src="src/littlejs.min.js"></script>
+<script src="src/js/data.js"></script>
+<script src="src/js/battle.js"></script>
+<script src="src/js/overworld.js"></script>
+<script src="src/js/hud.js"></script>
+<script src="src/js/dialog.js"></script>
+<script src="src/js/littlejs-game.js"></script>
 </body>
 </html>

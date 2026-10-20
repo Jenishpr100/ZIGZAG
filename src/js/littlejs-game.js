@@ -27,6 +27,7 @@ let counts = [0, 0, 0, 0];
 let flash = 0, flashColor, shake = 0, judgeLinePulse = 0;
 let camDive = null;         // {t, dur, fromPos, fromScale, toPos, toScale}
 let pendingState = null;
+let pendingBattleAfterWorld = false;   // stage-clear (0 misses) -> auto-battle
 let muted = false;
 
 // ---- play-state ------------------------------------------------------------
@@ -276,6 +277,16 @@ function gameUpdatePost()
         pendingState = null;
         transitionTo(next);
     }
+
+    // stage-clear auto-battle: once the world transition lands, fire the fight
+    if (pendingBattleAfterWorld && state == 'world')
+    {
+        pendingBattleAfterWorld = false;
+        const pb = (typeof window != 'undefined' && window.ZZ && window.ZZ.pendingBattle) || null;
+        if (typeof window != 'undefined' && window.ZZ) window.ZZ.pendingBattle = null;  // consume it
+        if (pb && typeof ZZ != 'undefined' && ZZ && typeof ZZ.startBattle == 'function')
+            ZZ.startBattle(pb.enemyId, pb.def);
+    }
 }
 
 function gameRender()
@@ -488,8 +499,11 @@ function playUpdate()
     for (const k in laneFlash) laneFlash[k] = Math.max(0, laneFlash[k] - timeDelta*4);
 
     // ---- taps & hold starts (LEFT / RIGHT) ---------------------------------
-    if (keyWasPressed('ArrowLeft') || keyWasPressed('ArrowRight'))
-        tryStartHit();
+    // lane-exclusive: LEFT hits TOP, RIGHT hits BOTTOM, CENTER from either
+    if (keyWasPressed('ArrowLeft'))
+        tryStartHit('ArrowLeft');
+    if (keyWasPressed('ArrowRight'))
+        tryStartHit('ArrowRight');
 
     // ---- flicks (UP) during an active hold ---------------------------------
     if (keyWasPressed('ArrowUp'))
@@ -524,14 +538,17 @@ function songClock()
         songTime = ZZ.Audio.now();
 }
 
-// a fresh LEFT/RIGHT press: hit the nearest pending TAP, or start a HOLD
-function tryStartHit()
+// a fresh LEFT/RIGHT press: hit the nearest pending TAP, or start a HOLD.
+// Lane-exclusive model: TOP notes only LEFT, BOTTOM notes only RIGHT,
+// CENTER notes can be hit from either arrow.
+function tryStartHit(arrow)
 {
     let target = null, bestDist = PLAY.hitWindow + 1e-4;
     for (const n of notes)
     {
         if (n.state != 'pending') continue;
-        if (n.lane != 'center' && n.lane != activeLane) continue;
+        if (n.lane == 'top'    && arrow != 'ArrowLeft')  continue;
+        if (n.lane == 'bottom' && arrow != 'ArrowRight') continue;
         const d = Math.abs(n.t - songTime);
         if (d < bestDist) { bestDist = d; target = n; }
     }
@@ -646,7 +663,17 @@ function endSong()
 
     // no canvas results screen: publish the summary and give the screen back
     publishResult(playResult);
-    zzLaneRelease('songs');
+
+    // Stage Clear (0 misses) with a pending level battle -> auto-trigger combat.
+    // ZZ.startBattle requires state == 'world', so queue the world transition
+    // and fire the battle from gameUpdatePost after the transition applies.
+    if (counts[3] === 0 && typeof window != 'undefined' && window.ZZ && window.ZZ.pendingBattle)
+    {
+        pendingBattleAfterWorld = true;
+        setState('world');
+    }
+    else
+        zzLaneRelease('songs');
 }
 
 // weighted accuracy of the run so far, 0..1 (perfect=1, great=.75, good=.4)
@@ -1307,15 +1334,7 @@ function renderStage()
                 alpha(C.neon, .9*k), .07, C.ink, PI/4);
     }
 
-    // ---- key hints, tucked into the left of each band -----------------------
-    for (const lane of ['bottom', 'top'])
-    {
-        const y = laneY(lane), on = activeLane == lane, base = playLaneColor(lane);
-        drawText(lane == 'top' ? 'TOP' : 'BOT', vec2(-bandW*.5 + 1.1, y + .12),
-            .5, alpha(base, on ? .95 : .4), .04, alpha(C.bg, .85), 'left', DATA.ui.font);
-        drawText('L R', vec2(-bandW*.5 + 1.1, y - .64), .36,
-            alpha(C.dim, on ? .8 : .35), 0, 0, 'left', DATA.ui.soft);
-    }
+    // ---- bars are unlabeled (certification requirement #19) ---------------
     drawText('↓ SWAP', vec2(bandW*.5 - 1.1, laneY('center') + .12), .42,
         alpha(C.ink, .5 + laneSwapPulse*.45), .03, alpha(C.bg, .85), 'right', DATA.ui.font);
     drawText('↑ FLICK', vec2(bandW*.5 - 1.1, laneY('center') - .62), .32,

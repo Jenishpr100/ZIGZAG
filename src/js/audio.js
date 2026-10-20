@@ -140,6 +140,15 @@ function audioUnlock() {
   if (ac && ac.state == 'suspended') ac.resume(); // browsers need one gesture
 }
 
+// One-time user-gesture listener to unlock the AudioContext and silence the
+// "An AudioContext was prevented from starting automatically" warning.
+['click', 'keydown', 'touchstart'].forEach(evt => {
+  window.addEventListener(evt, function unlockOnce() {
+    audioUnlock();
+    ['click', 'keydown', 'touchstart'].forEach(e => window.removeEventListener(e, unlockOnce));
+  }, { once: true, passive: true });
+});
+
 function synthNote(semitone, dur = .25, type = 'sawtooth', vol = .22) {
   const ac = typeof audioContext != 'undefined' ? audioContext : 0;
   if (!ac || ac.state != 'running') return;
